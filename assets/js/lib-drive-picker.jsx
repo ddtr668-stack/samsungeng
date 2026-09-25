@@ -62,6 +62,19 @@ let _gapiInited = false;
 let _gisInited = false;
 let _tokenClient = null;
 let _accessToken = null;
+let _accessTokenExp = 0;
+
+// 토큰을 브라우저에 보관(약 1시간) → 새로고침·다른 계약으로 이동해도 Google 로그인 창이 다시 뜨지 않음
+const GDRIVE_TOKEN_KEY = 'hb.gdrive.token';
+try {
+  const saved = JSON.parse(localStorage.getItem(GDRIVE_TOKEN_KEY) || 'null');
+  if (saved && saved.t && saved.exp > Date.now() + 60000) { _accessToken = saved.t; _accessTokenExp = saved.exp; }
+} catch (e) { /* 무시 */ }
+const hasDriveToken = () => !!_accessToken && _accessTokenExp > Date.now() + 60000;
+const clearDriveToken = () => {
+  _accessToken = null; _accessTokenExp = 0;
+  try { localStorage.removeItem(GDRIVE_TOKEN_KEY); } catch (e) {}
+};
 
 async function loadGoogleApis() {
   if (!hasDriveCredentials()) {
@@ -130,17 +143,18 @@ function requestAccessToken() {
         return reject(new Error(full));
       }
       _accessToken = resp.access_token;
+      _accessTokenExp = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+      try { localStorage.setItem(GDRIVE_TOKEN_KEY, JSON.stringify({ t: _accessToken, exp: _accessTokenExp })); } catch (e) {}
       _applyTokenToGapi(resp.access_token);
       resolve(resp.access_token);
     };
     // 이미 토큰 있으면 재사용 (silent), 없으면 팝업
-    if (_accessToken) {
+    if (hasDriveToken()) {
       _applyTokenToGapi(_accessToken);
       resolve(_accessToken);
     } else {
-      // prompt: 'consent' → 매번 동의 화면 → 팝업 닫힘/차단 시 실패
-      // 처음이면 'consent', 이후는 prompt 없이 silent 시도가 자연스러움
-      _tokenClient.requestAccessToken({ prompt: 'consent' });
+      // prompt '' : 처음 한 번만 동의 화면, 이후에는 계정 확인만 (매번 동의 화면을 띄우지 않음)
+      _tokenClient.requestAccessToken({ prompt: '' });
     }
   });
 }
@@ -509,4 +523,6 @@ Object.assign(window, {
   // ─── SiteFoldersCard 등에서 재사용할 저수준 헬퍼 ───
   loadGoogleApis,
   requestAccessToken,
+  hasDriveToken,
+  clearDriveToken,
 });
