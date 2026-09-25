@@ -2,11 +2,20 @@
    앱 · 데이터 로딩 · 라우팅 · 모달 통합
 ═══════════════════════════════════════════════════════════════ */
 
+// ─── 자동 로그아웃: 10분 동안 사용하지 않으면 (마지막 사용 시각은 브라우저 탭끼리 공유) ───
+const IDLE_LIMIT_MS = 10 * 60 * 1000;
+const IDLE_WARN_MS = 60 * 1000;          // 로그아웃 1분 전 경고
+const LAST_ACTIVITY_KEY = 'hb.lastActivity';
+const getLastActivity = () => { try { return Number(localStorage.getItem(LAST_ACTIVITY_KEY)) || 0; } catch { return 0; } };
+const setLastActivity = (t) => { try { localStorage.setItem(LAST_ACTIVITY_KEY, String(t)); } catch {} };
+
 const App = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [needLogin, setNeedLogin] = useState(false);
+  const [loginNotice, setLoginNotice] = useState('');
+  const [idleLeft, setIdleLeft] = useState(null);   // 자동 로그아웃까지 남은 초 (경고 표시용)
   const [route, setRoute] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
     catch { return { screen:'dashboard' }; }
@@ -27,7 +36,14 @@ const App = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // 창을 닫아 둔 사이 10분이 지났으면 로그아웃된 상태로 시작
+      const last = getLastActivity();
+      if (isLoggedIn() && last && Date.now() - last > IDLE_LIMIT_MS) {
+        await apiClient.logout();
+        setLoginNotice('10분 동안 사용하지 않아 자동으로 로그아웃되었습니다.');
+      }
       const res = await loadInitialData();
+      if (!res.needLogin) setLastActivity(Date.now());
       if (res.needLogin) { setNeedLogin(true); setData(null); setError(null); return; }
       setNeedLogin(false);
       if (!res.data) throw new Error(res.errors?.join(' / ') || '데이터 로드 실패');
@@ -54,9 +70,39 @@ const App = () => {
   const logout = useCallback(async () => {
     if (!window.confirm('로그아웃할까요?')) return;
     await apiClient.logout();
+    setLoginNotice('');
     setData(null);
     setNeedLogin(true);
   }, []);
+
+  // 사용 감지 · 10분 무사용 시 자동 로그아웃
+  const loggedInView = !needLogin && !!data;
+  useEffect(() => {
+    if (!loggedInView) { setIdleLeft(null); return; }
+    let lastWrite = 0;
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastWrite > 5000) { lastWrite = now; setLastActivity(now); }
+    };
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'wheel'];
+    events.forEach(ev => window.addEventListener(ev, onActivity, { passive: true }));
+    setLastActivity(Date.now());
+    const timer = setInterval(async () => {
+      const idle = Date.now() - (getLastActivity() || Date.now());
+      if (idle >= IDLE_LIMIT_MS) {
+        clearInterval(timer);
+        await apiClient.logout();
+        setLoginNotice('10분 동안 사용하지 않아 자동으로 로그아웃되었습니다.');
+        setData(null);
+        setNeedLogin(true);
+      } else if (idle >= IDLE_LIMIT_MS - IDLE_WARN_MS) {
+        setIdleLeft(Math.ceil((IDLE_LIMIT_MS - idle) / 1000));
+      } else {
+        setIdleLeft(null);
+      }
+    }, 1000);
+    return () => { clearInterval(timer); events.forEach(ev => window.removeEventListener(ev, onActivity)); };
+  }, [loggedInView]);
 
   const refresh = useCallback(async () => {
     const fresh = await refreshData();
@@ -95,7 +141,7 @@ const App = () => {
   }, []);
 
   if (loading) return <div className="boot">불러오는 중…</div>;
-  if (needLogin) return <LoginScreen onLoggedIn={() => { setRoute({ screen:'dashboard' }); load(); }}/>;
+  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLoginNotice(''); setRoute({ screen:'dashboard' }); load(); }}/>;
   if (error && !data) return (
     <div style={{padding:40,fontSize:14,color:'var(--ink-2)'}}>
       <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>데이터 로드 실패</div>
@@ -124,6 +170,19 @@ const App = () => {
 
   return (
     <ToastProvider>
+      {idleLeft != null && (
+        <div className="no-print" role="alertdialog" aria-live="assertive"
+          style={{position:'fixed',left:'50%',bottom:24,transform:'translateX(-50%)',zIndex:9999,
+            background:'var(--green-800)',color:'#F5F1E4',borderRadius:12,padding:'12px 16px',
+            boxShadow:'0 12px 32px rgba(0,0,0,.25)',display:'flex',alignItems:'center',gap:14,
+            fontSize:13.5,maxWidth:'calc(100vw - 32px)',flexWrap:'wrap'}}>
+          <span>사용이 없어 <b>{idleLeft}초</b> 후 자동으로 로그아웃됩니다.</span>
+          <button type="button" onClick={() => { setLastActivity(Date.now()); setIdleLeft(null); }}
+            style={{background:'#F5F1E4',color:'var(--green-800)',border:0,borderRadius:7,padding:'6px 12px',fontWeight:700,cursor:'pointer'}}>
+            계속 사용
+          </button>
+        </div>
+      )}
       <div className="app">
         <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}/>
         <main>
