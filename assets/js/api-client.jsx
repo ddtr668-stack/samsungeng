@@ -59,6 +59,9 @@ const setAuth = (token, user) => {
   if (user) localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user)); else localStorage.removeItem(AUTH_USER_KEY);
 };
 const isLoggedIn = () => !!getAuthToken();
+// 권한 확인 (화면 표시용 · 실제 권한 검사는 Apps Script 에서)
+const isAdmin = () => (getAuthUser() || {}).role === 'admin';
+const canEdit = () => { const r = (getAuthUser() || {}).role; return r === 'admin' || r === 'editor'; };
 
 // ─── 공용 설정 (서버에 저장 → 어느 브라우저에서 로그인해도 동일) ───
 const SYNCED_SETTINGS = {
@@ -144,6 +147,12 @@ const api = {
     setAuth(r.token, getAuthUser());
     return r;
   },
+  signup: (form) => apiFetch('signup', { method:'POST', body: form }),
+  me: () => apiFetch('me'),
+  listUsers: () => apiFetch('users'),
+  updateUser: (id, patch) => apiFetch('updateUser', { method:'POST', body:{ id, patch } }),
+  deleteUser: (id) => apiFetch('deleteUser', { method:'POST', body:{ id } }),
+  setManager: (no, manager) => apiFetch('setManager', { method:'POST', body:{ no, manager } }),
   getAppSettings: () => apiFetch('appSettings'),
   saveAppSettings: pushAppSettings,
   bootstrap: () => apiFetch('bootstrap'),
@@ -222,6 +231,7 @@ async function loadInitialData() {
       const [boot, st] = await Promise.all([api.bootstrap(), api.getAppSettings().catch(() => null)]);
       if (st) applyServerSettings(st.settings);
       const data = ensureIds(boot);
+      if (boot.user) setAuth(getAuthToken(), boot.user);
       const enriched = { ...data, _source: 'api', _fetchedAt: Date.now() };
       cache.set(enriched);
       return { data: enriched, source: 'api' };
@@ -263,6 +273,7 @@ async function loadInitialData() {
 async function refreshData() {
   if (!hasApiUrl()) throw new Error('API URL이 설정되지 않았습니다.');
   const data = ensureIds(await api.bootstrap());
+  if (data.user) setAuth(getAuthToken(), data.user);
   const enriched = { ...data, _source: 'api', _fetchedAt: Date.now() };
   cache.set(enriched);
   return enriched;
@@ -279,6 +290,8 @@ Object.assign(window, {
   getAuthToken,
   getAuthUser,
   isLoggedIn,
+  isAdmin,
+  canEdit,
   pushAppSettings,
   hasApiUrl,
   getSheetUrl,

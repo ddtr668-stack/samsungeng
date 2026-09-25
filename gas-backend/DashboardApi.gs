@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-25-02 (로그인 · 이름 충돌 방지 SG_)';
+var BUILD_VERSION_ = '2026-09-25-03 (사용자·권한·담당자)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -71,24 +71,34 @@ function handleRequest_(e, method) {
     // ─── 로그인 확인 (Auth.gs) ───
     var token = params.token || payload.token || '';
     if (route === 'login')  return SG_apiLogin_(payload);
+    if (route === 'signup') return SG_apiSignup_(payload);
     if (route === 'logout') return SG_apiLogout_(token);
-    var session = null;
+    var user = null;
     if (route !== 'ping') {
-      session = SG_getSession_(token);
-      if (!session) return errorOut_('로그인이 필요합니다.', 'AUTH_REQUIRED');
+      user = SG_getSessionUser_(token);
+      if (!user) return errorOut_('로그인이 필요합니다.', 'AUTH_REQUIRED');
+      var denied = SG_checkPermission_(route, user);
+      if (denied) return errorOut_(denied, 'FORBIDDEN');
+      if (!SG_canAccessContract_(user, SG_contractNoOf_(route, params, payload))) {
+        return errorOut_('본인이 담당한 계약만 볼 수 있습니다.', 'FORBIDDEN');
+      }
     }
 
     switch (route) {
-      case 'me':            return jsonOut_({ ok:true, user:{ id: session.id, role:'admin' } });
+      case 'me':            return jsonOut_({ ok:true, user: SG_publicUser_(user) });
       case 'appSettings':   return SG_apiGetAppSettings_();
       case 'saveAppSettings': return SG_apiSaveAppSettings_(payload);
-      case 'changePassword':  return SG_apiChangePassword_(payload, session);
+      case 'changePassword':  return SG_apiChangePassword_(payload, user);
+      case 'users':         return SG_apiListUsers_();
+      case 'updateUser':    return SG_apiUpdateUser_(payload, user);
+      case 'deleteUser':    return SG_apiDeleteUser_(payload, user);
+      case 'setManager':    return SG_apiSetManager_(payload);
       case 'ping':          return jsonOut_({ ok:true, message:'pong', ts:new Date().toISOString(), version: BUILD_VERSION_ });
-      case 'bootstrap':     return apiBootstrap_();
-      case 'contracts':     return apiListContracts_();
-      case 'contract':      return apiGetContract_(params.no || payload.no);
+      case 'bootstrap':     return apiBootstrap_(user);
+      case 'contracts':     return apiListContracts_(user);
+      case 'contract':      return apiGetContract_(params.no || payload.no, user);
       case 'update':        return apiUpdateContract_(payload);
-      case 'create':        return apiCreateContract_(payload);
+      case 'create':        return apiCreateContract_(payload, user);
       case 'clients':       return apiListClients_();
       case 'saveClient':    return apiSaveClient_(payload);
       case 'subcontractors':return jsonOut_({ ok: true, subcontractors: readSubcontractors_() });
@@ -105,7 +115,7 @@ function handleRequest_(e, method) {
       case 'saveExpense':   return apiSaveExpense_(payload);
       case 'cancelExpenseRound': return apiCancelExpenseRound_(payload);
       // ─── 신규: 변경 이력 조회 ───
-      case 'changeLog':     return apiChangeLog_();
+      case 'changeLog':     return (user.ownOnly && user.role !== 'admin') ? jsonOut_({ ok:true, log:[] }) : apiChangeLog_();
       // ─── 신규: 자동 백업(30일 보관) ───
       case 'backupSettings':     return apiGetBackupSettings_();
       case 'saveBackupSettings': return apiSaveBackupSettings_(payload);
@@ -125,11 +135,16 @@ function handleRequest_(e, method) {
 // (한 번의 요청으로 요약·계약·거래처·지출이력을 모두 반환)
 // ============================================================
 
-function apiBootstrap_() {
-  var contracts = readContracts_();
+function apiBootstrap_(user) {
+  var contracts = SG_applyManagers_(readContracts_(), user);
   var clients = readClients_();
   var subcontractors = readSubcontractors_();
   var expenseHistory = readExpenseHistory_();
+  if (user && user.ownOnly && user.role !== 'admin') {
+    var ownSites = {};
+    contracts.forEach(function (c) { ownSites[c.projectName] = true; });
+    expenseHistory = expenseHistory.filter(function (h) { return ownSites[String(h.site || '').trim()]; });
+  }
 
   return jsonOut_({
     ok: true,
@@ -148,7 +163,8 @@ function apiBootstrap_() {
     categoryStats: aggregateCategory_(contracts),
     monthlyStats: aggregateMonthly_(contracts),
     topBalance: topBalance_(contracts, 10),
-    expenseHistory: expenseHistory
+    expenseHistory: expenseHistory,
+    user: user ? SG_publicUser_(user) : null
   });
 }
 
@@ -156,15 +172,15 @@ function apiBootstrap_() {
 // 계약 목록 조회
 // ============================================================
 
-function apiListContracts_() {
-  var contracts = readContracts_();
+function apiListContracts_(user) {
+  var contracts = SG_applyManagers_(readContracts_(), user);
   return jsonOut_({ ok: true, contracts: contracts });
 }
 
-function apiGetContract_(no) {
+function apiGetContract_(no, user) {
   no = Number(no);
   if (!no) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
-  var contracts = readContracts_();
+  var contracts = SG_applyManagers_(readContracts_(), user);
   var found = null;
   for (var i = 0; i < contracts.length; i++) {
     if (Number(contracts[i].no) === no) { found = contracts[i]; break; }
@@ -342,7 +358,7 @@ function recomputeDerivedFields_(sheet, row) {
 
 // 신규 계약 등록 시 계약번호(NO) 채번 + 행 추가를 하나의 잠금(LockService) 안에서 처리한다.
 // (잠금이 없으면 거의 동시에 두 번 등록될 때 두 계약이 같은 NO를 배정받는 경우가 생길 수 있다.)
-function apiCreateContract_(payload) {
+function apiCreateContract_(payload, user) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000); // 최대 10초 대기
@@ -386,7 +402,13 @@ function apiCreateContract_(payload) {
     SpreadsheetApp.flush();
 
     var savedRow = sheet.getRange(newRow, 1, 1, DB_LAST_COL_).getValues()[0];
-    return jsonOut_({ ok: true, contract: rowToContract_(savedRow) });
+    var created = rowToContract_(savedRow);
+    // 담당자: 관리자가 지정하면 그 사람, 아니면 등록한 사람
+    var managerName = (user && user.role === 'admin' && contract.manager) ? String(contract.manager).trim()
+      : ((user && user.name) || SG_DEFAULT_MANAGER_);
+    SG_setManagerOf_(newNo, managerName);
+    created.manager = managerName;
+    return jsonOut_({ ok: true, contract: created });
   } finally {
     lock.releaseLock();
   }

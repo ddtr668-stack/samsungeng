@@ -27,7 +27,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
   const [restoringId, setRestoringId] = useState(null);
 
   const loadBackupInfo = async () => {
-    if (!hasApiUrl()) return;
+    if (!hasApiUrl() || !isAdmin()) return;
     setBackupLoading(true);
     try {
       const [s, l] = await Promise.all([apiClient.getBackupSettings(), apiClient.listBackups()]);
@@ -187,6 +187,49 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
     toast?.('캐시가 비워졌습니다', 'success');
   };
 
+  const me = getAuthUser() || {};
+  // 내 계정 (비밀번호 변경)
+  const accountCard = (
+      <div className="card pad-lg">
+        <CardHead title="내 계정" sub={[me.name, me.dept, me.phone, me.id && `아이디 ${me.id}`, me.roleLabel && `권한 ${me.roleLabel}${me.ownOnly ? ' (본인 담당만)' : ''}`].filter(Boolean).join(' · ')}/>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))',gap:12,marginTop:6}}>
+          <div className="form-field">
+            <label>현재 비밀번호</label>
+            <input type="password" value={pwCur} onChange={e => setPwCur(e.target.value)} autoComplete="current-password"/>
+          </div>
+          <div className="form-field">
+            <label>새 비밀번호 (6자 이상)</label>
+            <input type="password" value={pwNew} onChange={e => setPwNew(e.target.value)} autoComplete="new-password"/>
+          </div>
+          <div className="form-field">
+            <label>새 비밀번호 확인</label>
+            <input type="password" value={pwNew2} onChange={e => setPwNew2(e.target.value)} autoComplete="new-password"/>
+          </div>
+        </div>
+        <div className="hstack" style={{marginTop:14}}>
+          <button className="btn-primary" onClick={changePassword} disabled={pwBusy || !pwCur || !pwNew || !pwNew2}>
+            <Icon name="check" size={14} stroke={2.4}/>
+            {pwBusy ? '변경 중…' : '비밀번호 변경'}
+          </button>
+        </div>
+      </div>
+  );
+
+  // 관리자가 아니면 내 계정(비밀번호 변경)만 표시
+  if (!isAdmin()) {
+    return (
+      <>
+        <div className="page-head">
+          <div>
+            <h1>설정 · 내 계정</h1>
+            <div className="page-sub">연동 설정과 사용자 관리는 관리자만 볼 수 있습니다.</div>
+          </div>
+        </div>
+        {accountCard}
+      </>
+    );
+  }
+
   return (
     <>
       <div className="page-head">
@@ -327,30 +370,10 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
         </div>
       </div>
 
-      {/* 관리자 계정 */}
-      <div className="card pad-lg">
-        <CardHead title="관리자 계정" sub={`로그인 아이디 · ${(getAuthUser() && getAuthUser().id) || 'admin'} · 비밀번호를 바꾸면 다른 브라우저의 로그인은 해제됩니다`}/>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))',gap:12,marginTop:6}}>
-          <div className="form-field">
-            <label>현재 비밀번호</label>
-            <input type="password" value={pwCur} onChange={e => setPwCur(e.target.value)} autoComplete="current-password"/>
-          </div>
-          <div className="form-field">
-            <label>새 비밀번호 (6자 이상)</label>
-            <input type="password" value={pwNew} onChange={e => setPwNew(e.target.value)} autoComplete="new-password"/>
-          </div>
-          <div className="form-field">
-            <label>새 비밀번호 확인</label>
-            <input type="password" value={pwNew2} onChange={e => setPwNew2(e.target.value)} autoComplete="new-password"/>
-          </div>
-        </div>
-        <div className="hstack" style={{marginTop:14}}>
-          <button className="btn-primary" onClick={changePassword} disabled={pwBusy || !pwCur || !pwNew || !pwNew2}>
-            <Icon name="check" size={14} stroke={2.4}/>
-            {pwBusy ? '변경 중…' : '비밀번호 변경'}
-          </button>
-        </div>
-      </div>
+      {accountCard}
+
+      {/* 사용자(담당자) 관리 */}
+      <UserManagement/>
 
       {/* Google Drive Picker 인증 정보 (지출품의서 엑셀 가져오기용) */}
       <div className="card pad-lg">
