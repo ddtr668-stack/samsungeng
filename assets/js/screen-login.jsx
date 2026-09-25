@@ -66,7 +66,13 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
       let ver = '';
       try { const r = await apiClient.ping(); ver = r.version || '버전 정보 없음 (구버전 코드)'; }
       catch (e2) { ver = '확인 실패: ' + e2.message; }
-      setError(msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: 2026-09-25-05)');
+      // 웹앱이 예전 버전으로 배포돼 있으면 원인을 바로 안내
+      const EXPECTED = '2026-09-25-05';
+      const verDate = (String(ver).match(/\d{4}-\d{2}-\d{2}-\d{2}/) || [''])[0];
+      const outdated = verDate && verDate < EXPECTED;
+      setError(outdated
+        ? `Apps Script 웹앱이 예전 버전(${verDate})으로 배포되어 있습니다.\n편집기의 새 코드가 아직 웹앱에 반영되지 않았습니다.\n\n해결: Apps Script → 배포 → 배포 관리 → ✏️ 연필 → 버전 '새 버전' → 배포\n('새 배포'가 아니라 기존 배포를 수정해야 주소가 그대로 유지됩니다)`
+        : msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: ' + EXPECTED + ')');
     } finally {
       setBusy(false);
     }
