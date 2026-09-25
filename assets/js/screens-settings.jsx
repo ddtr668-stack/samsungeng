@@ -88,9 +88,9 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
   };
 
   // 서버(Apps Script)에 저장 → 다른 브라우저에서 로그인해도 같은 설정 유지
-  const pushShared = async (okMsg) => {
+  const pushShared = async (okMsg, fields) => {
     try {
-      await pushAppSettings();
+      await pushAppSettings(fields);
       toast?.(okMsg + ' (모든 브라우저에 적용)', 'success');
       return true;
     } catch (e) {
@@ -102,7 +102,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
   const saveSheet = async () => {
     setSheetUrl(sheetUrl);
     setSheetName(sheetName);
-    if (!(await pushShared('스프레드시트 정보가 저장되었습니다'))) return;
+    if (!(await pushShared('스프레드시트 정보가 저장되었습니다', ['sheetUrl', 'sheetName']))) return;
     setSheetSaved(true);
     setTimeout(() => setSheetSaved(false), 2000);
     // 사이드바 즉시 반영을 위한 리렌더 (부모 트리거 재활용)
@@ -112,7 +112,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
   const saveDriveCreds = async () => {
     setGDriveApiKey(driveApiKey);
     setGDriveClientId(driveClientId);
-    if (!(await pushShared('Google Drive 인증 정보가 저장되었습니다'))) return;
+    if (!(await pushShared('Google Drive 인증 정보가 저장되었습니다', ['driveApiKey', 'driveClientId']))) return;
     setDriveSaved(true);
     setTimeout(() => setDriveSaved(false), 2000);
   };
@@ -121,7 +121,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
     setGDriveClientId('');
     setDriveApiKey('');
     setDriveClientId('');
-    await pushShared('Google Drive 인증 정보가 삭제되었습니다');
+    await pushShared('Google Drive 인증 정보가 삭제되었습니다', ['driveApiKey', 'driveClientId']);
   };
 
   // ─── 관리자 비밀번호 변경 ───
