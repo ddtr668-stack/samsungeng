@@ -184,7 +184,7 @@ const PaymentModal = ({ open, contract, onClose, onSaved }) => {
               수금 누적 관리
             </div>
             <div className="modal-sub">
-              계약 #{String(contract?.no || '').padStart(4,'0')} · {contract?.client || ''} · {contract?.projectName || ''}
+              계약 {contractCode(contract)} · {contract?.client || ''} · {contract?.projectName || ''}
             </div>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="닫기">

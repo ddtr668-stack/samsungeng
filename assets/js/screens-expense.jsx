@@ -106,7 +106,7 @@ const ScreenExpense = ({ data, onSelectContract }) => {
             <tbody>
               {paged.map(c => (
                 <tr key={c.id ?? c.no} className="clickable" onClick={()=>onSelectContract(c.id ?? c.no)}>
-                  <td className="num tnum" style={{fontWeight:600,color:'var(--ink-2)'}}>#{c.no}</td>
+                  <td className="tnum" style={{fontWeight:600,color:'var(--ink-2)',whiteSpace:'nowrap'}}>{contractCode(c)}</td>
                   <td className="proj-cell">
                     <div className="p-name" style={{maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.projectName || '—'}</div>
                     <div className="p-client">{c.client}</div>

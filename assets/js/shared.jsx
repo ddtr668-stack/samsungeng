@@ -3,6 +3,13 @@
 ═══════════════════════════════════════════════════════════════ */
 const { useState, useEffect, useMemo, useRef, useCallback, Fragment } = React;
 
+// ─── 계약 표시 번호: 담당자별 번호 "이상규-001" (없으면 전체 번호 #0106) ───
+const contractCode = (c) => {
+  if (!c) return '';
+  if (c.managerCode) return c.managerCode;
+  return '#' + String(c.no || '').padStart(4, '0');
+};
+
 // ─── 숫자 포맷 ───
 const fmtKRW = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -373,5 +380,5 @@ Object.assign(window, {
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,
   Icon, Sidebar, Topbar, usePagination, Pager,
   Amt, StatusPill, CatTag, MiniProgress, CardHead,
-  NAV,
+  NAV, contractCode,
 });

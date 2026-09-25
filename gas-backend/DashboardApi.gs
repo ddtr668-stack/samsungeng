@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-25-03 (사용자·권한·담당자)';
+var BUILD_VERSION_ = '2026-09-25-04 (담당자별 계약번호)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -406,8 +406,10 @@ function apiCreateContract_(payload, user) {
     // 담당자: 관리자가 지정하면 그 사람, 아니면 등록한 사람
     var managerName = (user && user.role === 'admin' && contract.manager) ? String(contract.manager).trim()
       : ((user && user.name) || SG_DEFAULT_MANAGER_);
-    SG_setManagerOf_(newNo, managerName);
+    var mr = SG_setManagerOf_(newNo, managerName);
     created.manager = managerName;
+    created.managerNo = mr.seq;
+    created.managerCode = SG_managerCode_(managerName, mr.seq);
     return jsonOut_({ ok: true, contract: created });
   } finally {
     lock.releaseLock();
