@@ -30,6 +30,8 @@ const App = () => {
       if (!res.data) throw new Error(res.errors?.join(' / ') || '데이터 로드 실패');
       setData(res.data);
       setError(null);
+      // 데이터가 없으면 API 연결부터 하도록 설정 화면으로 이동
+      if (res.source === 'empty') setRoute({ screen:'settings' });
     } catch (e) {
       setError(String(e.message || e));
     } finally {
