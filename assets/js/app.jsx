@@ -159,7 +159,7 @@ const App = () => {
             <ScreenClients data={data} onSelectContract={selectContract} onUpdated={refresh}/>
           )}
           {route.screen === 'expense' && (
-            <ScreenExpense data={data} onSelectContract={selectContract}/>
+            <ScreenExpense data={data} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
           )}
           {route.screen === 'reports' && (
             <ScreenReports data={data}/>

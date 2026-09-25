@@ -2,7 +2,7 @@
    화면 6 · 지출품의서·기성 관리
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenExpense = ({ data, onSelectContract }) => {
+const ScreenExpense = ({ data, onSelectContract, onOpenExpense }) => {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
 
@@ -128,8 +128,12 @@ const ScreenExpense = ({ data, onSelectContract }) => {
                   </td>
                   <td className="right">
                     <div className="row-act">
-                      {c.subcontractBalance > 0 && <button className="pri" onClick={(e)=>e.stopPropagation()}>기성</button>}
-                      <button onClick={(e)=>e.stopPropagation()}>상세</button>
+                      {c.subcontractBalance > 0 && (typeof canEdit !== 'function' || canEdit()) && (
+                        <button className="pri" title="지출품의서(기성 청구) 작성 · 회차별 지급 내역 확인"
+                          onClick={(e)=>{ e.stopPropagation(); onOpenExpense?.(c); }}>기성</button>
+                      )}
+                      <button title="계약 상세 보기 (설치비 지급 현황 · 지급완료 처리)"
+                        onClick={(e)=>{ e.stopPropagation(); onSelectContract(c.id ?? c.no); }}>상세</button>
                     </div>
                   </td>
                 </tr>
