@@ -46,7 +46,7 @@ const ScreenExpense = ({ data, onSelectContract, onOpenExpense, onOpenBulk, mana
             filtered.map(c => [contractCode(c), c.manager || '', c.projectName, c.client, c.subcontractor, c.subcontractAmount, c.subcontractPaid, c.subcontractBalance, Math.round((c.기성률 || 0) * 100) + '%', c.expenseStatus]))}>
             <Icon name="download" size={14}/>지출 리포트</button>
           {(typeof canEdit !== 'function' || canEdit()) && (
-            <button className="btn-primary" onClick={() => onOpenBulk?.()} title="여러 프로젝트를 골라 다량 지출품의서 작성"><Icon name="plus" size={14} stroke={2.2}/>지출품의서 작성</button>
+            <button className="btn-primary" onClick={() => onOpenBulk?.()} title="여러 프로젝트를 골라 지출품의서 작성"><Icon name="plus" size={14} stroke={2.2}/>지출품의서 작성</button>
           )}
         </div>
       </div>

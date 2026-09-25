@@ -638,3 +638,4 @@ window.classifyPayments = classifyPayments;
 window.buildExpensePrintHtml = buildExpensePrintHtml;
 window.printExpenseHtml = printExpenseHtml;
 window.ExpensePrintPreview = ExpensePrintPreview;
+window.EXPENSE_PRINT_CSS = EXPENSE_PRINT_CSS;
