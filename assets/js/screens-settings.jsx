@@ -314,7 +314,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
             <li>구글 스프레드시트에서 <b>확장 프로그램 → Apps Script</b> 열기</li>
             <li>기존 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Code.gs</code>, <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>BusinessTools.gs</code>, <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>ExpenseRequest.gs</code>가 이미 있는지 확인</li>
             <li>새 파일 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>DashboardApi</code>, <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Auth</code> 추가 → 제공된 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>.gs</code> 전체 붙여넣기</li>
-            <li><code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Auth.gs</code> 의 <b>setAdminPassword</b> 에 비밀번호 입력 → 실행 → 입력값 다시 지우기</li>
+            <li><code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Auth.gs</code> 의 <b>SG_setAdminPassword</b> 에 비밀번호 입력 → 실행 → 입력값 다시 지우기</li>
             <li>오른쪽 위 <b>배포 → 새 배포</b></li>
             <li>유형 <b>웹 앱</b> · 다음 사용자로 실행 <b>나</b> · 액세스 <b>모든 사용자</b> (데이터는 로그인해야만 조회)</li>
             <li>배포 후 나오는 <b>URL</b>을 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>assets/config.js</code> 의 apiUrl 에 등록</li>
