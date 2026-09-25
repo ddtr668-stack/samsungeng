@@ -4,9 +4,90 @@
 
 // ─── 담당자별 대시보드: 선택한 담당자의 계약만으로 요약·통계를 다시 계산 ───
 const DASH_MANAGER_KEY = 'hb.dashManager';
-const buildDashboardView = (data, manager) => {
-  if (!manager || manager === 'all') return data;
-  const contracts = data.contracts.filter(c => c.manager === manager);
+const DASH_RANGE_KEY = 'hb.dashRange';
+
+// ─── 기간 선택 (월 단위) ───
+const ymOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const DateRangePicker = ({ range, onChange, minYm, maxYm }) => {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(range);
+  const boxRef = useRef(null);
+  useEffect(() => { if (open) setDraft(range); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const fmt = (ym) => ym ? ym.replace('-', '.') : '';
+  const label = `${fmt(range.from || minYm) || '—'} – ${fmt(range.to || maxYm) || '—'}`;
+  const now = new Date();
+  const y = now.getFullYear();
+  const back = (m) => { const d = new Date(y, now.getMonth() - m, 1); return ymOf(d); };
+  const presets = [
+    ['전체 기간', { from:'', to:'' }],
+    ['올해', { from:`${y}-01`, to:`${y}-12` }],
+    ['작년', { from:`${y-1}-01`, to:`${y-1}-12` }],
+    ['최근 6개월', { from: back(5), to: ymOf(now) }],
+    ['최근 12개월', { from: back(11), to: ymOf(now) }],
+  ];
+  const apply = (r) => {
+    let { from, to } = r;
+    if (from && to && from > to) [from, to] = [to, from];
+    onChange({ from: from || '', to: to || '' });
+    setOpen(false);
+  };
+  const isOn = (r) => (range.from || '') === r.from && (range.to || '') === r.to;
+  const inputSt = { padding:'7px 6px', border:'1px solid var(--line)', borderRadius:7, fontSize:12.5, background:'#fff', color:'var(--ink-1)', width:'100%', minWidth:0, boxSizing:'border-box' };
+
+  return (
+    <div ref={boxRef} style={{position:'relative'}}>
+      <div className="date-pick" role="button" tabIndex={0} onClick={() => setOpen(o => !o)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }}
+        title="기간 선택 (계약일 기준)">
+        <Icon name="calendar" size={14}/>
+        <b>{label}</b>
+        <Icon name="chevronDown" size={11} stroke={2.2}/>
+      </div>
+      {open && (
+        <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',zIndex:50,width:340,maxWidth:'calc(100vw - 32px)',boxSizing:'border-box',background:'var(--surface)',border:'1px solid var(--line)',borderRadius:12,boxShadow:'0 12px 32px rgba(20,25,20,.14)',padding:14}}>
+          <div style={{fontSize:11.5,fontWeight:700,color:'var(--ink-3)',marginBottom:8}}>빠른 선택</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:14}}>
+            {presets.map(([name, r]) => (
+              <button key={name} type="button" className={`chip ${isOn(r) ? 'on' : ''}`} onClick={() => apply(r)}>{name}</button>
+            ))}
+          </div>
+          <div style={{fontSize:11.5,fontWeight:700,color:'var(--ink-3)',marginBottom:8}}>직접 선택 (계약일 기준)</div>
+          <div style={{display:'grid',gridTemplateColumns:'minmax(0,1fr) auto minmax(0,1fr)',gap:6,alignItems:'center'}}>
+            <input type="month" value={draft.from || ''} min={minYm} max={maxYm} onChange={e => setDraft(d => ({ ...d, from: e.target.value }))} style={inputSt} aria-label="시작 월"/>
+            <span style={{color:'var(--ink-4)'}}>–</span>
+            <input type="month" value={draft.to || ''} min={minYm} max={maxYm} onChange={e => setDraft(d => ({ ...d, to: e.target.value }))} style={inputSt} aria-label="끝 월"/>
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:6,marginTop:12}}>
+            <button type="button" className="btn-ghost" style={{height:32,fontSize:12,padding:'0 12px'}} onClick={() => setOpen(false)}>취소</button>
+            <button type="button" className="btn-primary" style={{height:32,fontSize:12,padding:'0 14px'}} onClick={() => apply(draft)}>적용</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+// range: { from:'YYYY-MM' | '', to:'YYYY-MM' | '' } — 계약일 기준 기간
+const buildDashboardView = (data, manager, range) => {
+  const from = (range && range.from) || '';
+  const to = (range && range.to) || '';
+  if ((!manager || manager === 'all') && !from && !to) return data;
+  const contracts = data.contracts.filter(c => {
+    if (manager && manager !== 'all' && c.manager !== manager) return false;
+    if (from || to) {
+      const ym = (c.contractDate || '').substring(0, 7);
+      if (!ym) return false;
+      if (from && ym < from) return false;
+      if (to && ym > to) return false;
+    }
+    return true;
+  });
   const summary = { totalAmount:0, paidAmount:0, balance:0, profit:0, statusCounts:{ 완료:0, 진행중:0, 미진행:0 } };
   const cat = {}, mon = {};
   contracts.forEach(c => {
@@ -39,7 +120,14 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
   const [manager, setManagerSel] = useState(() => { try { return localStorage.getItem(DASH_MANAGER_KEY) || 'all'; } catch { return 'all'; } });
   const selManager = manager !== 'all' && !managers.includes(manager) ? 'all' : manager;
   const pickManager = (v) => { setManagerSel(v); try { localStorage.setItem(DASH_MANAGER_KEY, v); } catch {} };
-  const data = useMemo(() => buildDashboardView(allData, selManager), [allData, selManager]);
+  // 기간 선택 (계약일 기준 · 브라우저에 기억)
+  const [range, setRangeState] = useState(() => { try { return JSON.parse(localStorage.getItem(DASH_RANGE_KEY)) || { from:'', to:'' }; } catch { return { from:'', to:'' }; } });
+  const setRange = (r) => { setRangeState(r); try { localStorage.setItem(DASH_RANGE_KEY, JSON.stringify(r)); } catch {} };
+  const [dataMinYm, dataMaxYm] = useMemo(() => {
+    const yms = allData.contracts.map(c => (c.contractDate || '').substring(0, 7)).filter(v => /^\d{4}-\d{2}$/.test(v)).sort();
+    return [yms[0] || '', yms[yms.length - 1] || ''];
+  }, [allData]);
+  const data = useMemo(() => buildDashboardView(allData, selManager, range), [allData, selManager, range]);
 
   const s = data.summary;
   // 이번 달 · 지난달 신규 계약 건수 (계약일 기준)
@@ -64,9 +152,31 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
   }, [data]);
 
   // 최근 6개월 트렌드
+  const [trendSpan, setTrendSpan] = useState('12');   // '6' | '12' | 'all'
   const trend = useMemo(() => {
-    return monthly.slice(-12);
-  }, [monthly]);
+    return trendSpan === 'all' ? monthly : monthly.slice(-Number(trendSpan));
+  }, [monthly, trendSpan]);
+
+  // 엑셀 내보내기: 지금 대시보드에 집계된 계약 목록 (CSV · 엑셀에서 바로 열림)
+  const exportCsv = () => {
+    const cols = [
+      ['계약번호', c => contractCode(c)], ['전체번호', c => c.no], ['계약일', c => c.contractDate || ''],
+      ['담당자', c => c.manager || ''], ['구분', c => c.category || ''], ['거래처', c => c.client || ''],
+      ['프로젝트명', c => c.projectName || ''], ['총 계약금', c => c.totalAmount || 0], ['수금액', c => c.paidAmount || 0],
+      ['미수 잔금', c => c.balance || 0], ['영업이윤', c => c.profit || 0], ['상태', c => c.status || ''],
+    ];
+    const esc = v => { const t = String(v == null ? '' : v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+    const lines = [cols.map(c => c[0]).join(',')].concat(data.contracts.map(c => cols.map(([, f]) => esc(f(c))).join(',')));
+    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type:'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    // 파일명은 영문으로 (브라우저에 따라 한글 파일명이 무시되는 경우가 있음)
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const period = range.from || range.to ? `_${(range.from || 'start').replace('-', '')}-${(range.to || 'now').replace('-', '')}` : '';
+    a.href = URL.createObjectURL(blob);
+    a.download = `contracts_${today}${period}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
 
   // 차트 스케일 - 최근 12개월 총계약
   const maxTrend = Math.max(1, ...trend.map(t => t.total));
@@ -88,15 +198,11 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
               {managers.map(m => <option key={m} value={m}>{m} 담당</option>)}
             </select>
           )}
-          <button className="btn-ghost">
+          <button className="btn-ghost" onClick={exportCsv} title="지금 보이는 조건의 계약 목록을 엑셀(CSV)로 저장">
             <Icon name="download" size={14}/>
             엑셀 내보내기
           </button>
-          <div className="date-pick">
-            <Icon name="calendar" size={14}/>
-            <b>2024.02 – 2026.08</b>
-            <Icon name="chevronDown" size={11} stroke={2.2}/>
-          </div>
+          <DateRangePicker range={range} onChange={setRange} minYm={dataMinYm} maxYm={dataMaxYm}/>
         </div>
       </div>
 
@@ -174,12 +280,12 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
         <div className="card">
           <CardHead
             title="월별 계약·수금 추이"
-            sub="최근 12개월 · 신규 계약금 vs 수금액"
+            sub={`${trendSpan === 'all' ? '전체 기간' : `최근 ${trendSpan}개월`} · 신규 계약금 vs 수금액`}
             right={
               <div className="seg">
-                <button>6M</button>
-                <button className="on">12M</button>
-                <button>전체</button>
+                {[['6','6M'], ['12','12M'], ['all','전체']].map(([v, l]) => (
+                  <button key={v} className={trendSpan === v ? 'on' : ''} onClick={() => setTrendSpan(v)}>{l}</button>
+                ))}
               </div>
             }
           />
@@ -188,6 +294,9 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
             <span className="lgnd"><span className="dot" style={{background:'var(--bronze-500)'}}></span>수금액 <b>{fmtKRW(trend.reduce((s,t)=>s+t.paid,0))}원</b></span>
           </div>
 
+          {trend.length === 0 ? (
+            <div style={{height:260,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--ink-4)',fontSize:13}}>선택한 조건에 해당하는 계약이 없습니다.</div>
+          ) : (
           <svg viewBox="0 0 720 260" width="100%" height="260" preserveAspectRatio="none" style={{display:'block',overflow:'visible'}}>
             <defs>
               <linearGradient id="grad-green" x1="0" x2="0" y1="0" y2="1">
@@ -257,6 +366,7 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
               })}
             </g>
           </svg>
+          )}
         </div>
 
         {/* Progress */}
