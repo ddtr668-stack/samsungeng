@@ -2,8 +2,20 @@
    화면 7 · 리포트 · 통계
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenReports = ({ data }) => {
+const REPORT_MANAGER_KEY = 'hb.reportManager';
+
+const ScreenReports = ({ data: allData }) => {
   const [tab, setTab] = useState('category');  // category | monthly | yearly
+  // ─── 담당자 선택 (대시보드와 같은 방식으로 선택한 담당자의 계약만 재집계) ───
+  const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean))].sort(), [allData]);
+  const [manager, setManagerSel] = useState(() => { try { return localStorage.getItem(REPORT_MANAGER_KEY) || 'all'; } catch { return 'all'; } });
+  const selManager = manager !== 'all' && !managers.includes(manager) ? 'all' : manager;
+  const pickManager = (v) => { setManagerSel(v); try { localStorage.setItem(REPORT_MANAGER_KEY, v); } catch {} };
+  const data = useMemo(() => buildDashboardView(allData, selManager, null), [allData, selManager]);
+  const period = useMemo(() => {
+    const yms = data.contracts.map(c => (c.contractDate || '').substring(0, 7)).filter(v => /^\d{4}-\d{2}$/.test(v)).sort();
+    return yms.length ? `${yms[0].replace('-', '.')} – ${yms[yms.length - 1].replace('-', '.')}` : '—';
+  }, [data]);
   const cats = data.categoryStats;
   const monthly = data.monthlyStats;
 
@@ -22,19 +34,51 @@ const ScreenReports = ({ data }) => {
     return Object.values(acc).map(y => ({...y, marginRate: y.total ? y.profit/y.total : 0})).sort((a,b) => a.year.localeCompare(b.year));
   }, [data]);
 
-  const maxMonthly = Math.max(...monthly.map(m => m.total));
-  const maxYearly = Math.max(...yearly.map(y => y.total));
+  const maxMonthly = Math.max(1, ...monthly.map(m => m.total));
+  const maxYearly = Math.max(1, ...yearly.map(y => y.total));
+
+  // 엑셀 리포트: 지금 보고 있는 탭의 집계표를 CSV 로 저장
+  const exportCsv = () => {
+    const pct = v => (v * 100).toFixed(1) + '%';
+    let head, rows;
+    if (tab === 'category') {
+      head = ['부문', '건수', '계약금', '수금액', '미수 잔금', '이윤', '마진율'];
+      rows = cats.map(c => [c.name, c.count, c.total, c.paid, c.balance, c.profit, pct(c.marginRate || 0)]);
+    } else if (tab === 'monthly') {
+      head = ['월', '건수', '계약금', '수금액', '미수 잔금', '이윤'];
+      rows = monthly.map(m => [m.month, m.count, m.total, m.paid, m.balance, m.profit]);
+    } else {
+      head = ['연도', '건수', '계약금', '수금액', '미수 잔금', '이윤', '마진율'];
+      rows = yearly.map(y => [y.year, y.count, y.total, y.paid, y.balance, y.profit, pct(y.marginRate || 0)]);
+    }
+    const esc = v => { const t = String(v == null ? '' : v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+    const title = [`리포트 · ${{category:'부문별 실적', monthly:'월별 트렌드', yearly:'연도별 요약'}[tab]}`, `담당자: ${selManager === 'all' ? '전체' : selManager}`];
+    const lines = [title.join(' / '), head.join(',')].concat(rows.map(r => r.map(esc).join(',')));
+    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type:'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `report_${tab}_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>리포트 · 통계</h1>
-          <div className="page-sub">부문별·기간별 실적 분석 · 데이터 기간 <b>2024.02 – 2026.08</b></div>
+          <h1>{selManager === 'all' ? '리포트 · 통계' : `${selManager} 담당 · 리포트`}</h1>
+          <div className="page-sub">부문별·기간별 실적 분석 · 데이터 기간 <b>{period}</b> · 총 <b>{data.contracts.length}건</b></div>
         </div>
         <div className="hstack">
-          <button className="btn-ghost"><Icon name="print" size={14}/>PDF 출력</button>
-          <button className="btn-ghost"><Icon name="download" size={14}/>엑셀 리포트</button>
+          {managers.length > 0 && (
+            <select className="filter-select no-print" value={selManager} onChange={e => pickManager(e.target.value)}
+              title="담당자별 리포트" style={{height:36,fontSize:13,fontWeight:600}}>
+              <option value="all">담당자 · 전체</option>
+              {managers.map(m => <option key={m} value={m}>{m} 담당</option>)}
+            </select>
+          )}
+          <button className="btn-ghost no-print" onClick={() => window.print()} title="인쇄 창에서 'PDF로 저장' 선택"><Icon name="print" size={14}/>PDF 출력</button>
+          <button className="btn-ghost no-print" onClick={exportCsv} title="지금 보고 있는 탭의 집계표를 엑셀(CSV)로 저장"><Icon name="download" size={14}/>엑셀 리포트</button>
         </div>
       </div>
 
