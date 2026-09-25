@@ -613,7 +613,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
       <div className="detail-head">
         <div>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-            <span style={{fontSize:12,color:'var(--ink-3)',fontWeight:600,letterSpacing:'0.05em'}}>계약 #{String(c.no).padStart(4,'0')}</span>
+            <span style={{fontSize:12,color:'var(--ink-3)',fontWeight:600,letterSpacing:'0.05em'}}>계약 {contractCode(c)}{c.managerCode && <span style={{fontWeight:500,opacity:.7,marginLeft:5}}>· 전체 #{String(c.no).padStart(4,'0')}</span>}</span>
             <CatTag cat={c.category}/>
             <StatusPill status={c.status}/>
           </div>
@@ -862,7 +862,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
           <div className="field-grid">
             <div className="field">
               <div className="label">계약번호</div>
-              <div className="value mono">#{String(c.no).padStart(4,'0')}</div>
+              <div className="value mono">{contractCode(c)}</div>
             </div>
             <InlineField
               field="contractDate" label="계약월" type="date"
@@ -1040,7 +1040,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
                 {otherByClient.map(o => (
                   <div key={o.id ?? o.no} style={{padding:'10px 12px',border:'1px solid var(--line)',borderRadius:9,fontSize:12.5}}>
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
-                      <span style={{fontSize:11,color:'var(--ink-4)',fontWeight:600}}>#{o.no}</span>
+                      <span style={{fontSize:11,color:'var(--ink-4)',fontWeight:600,whiteSpace:'nowrap'}}>{contractCode(o)}</span>
                       <CatTag cat={o.category}/>
                       <StatusPill status={o.status}/>
                     </div>

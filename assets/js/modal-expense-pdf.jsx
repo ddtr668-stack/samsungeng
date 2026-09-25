@@ -254,7 +254,7 @@
     return `
       <h2 class="page-title">
         설치비 내역서
-        <span class="sub">계약 #${_esc(String(contract.no).padStart(4,'0'))} · ${_esc(contract.projectName)}</span>
+        <span class="sub">계약 ${_esc(contractCode(contract))} · ${_esc(contract.projectName)}</span>
       </h2>
       <table class="items">
         <thead>
@@ -296,7 +296,7 @@
     return `
       <h2 class="page-title">
         제품 내역서 (장비대)
-        <span class="sub">계약 #${_esc(String(contract.no).padStart(4,'0'))} · ${_esc(contract.projectName)}</span>
+        <span class="sub">계약 ${_esc(contractCode(contract))} · ${_esc(contract.projectName)}</span>
       </h2>
 
       ${summary ? `
@@ -357,7 +357,7 @@
     return `
       <h2 class="page-title">
         기타 경비 · 영업 수수료
-        <span class="sub">계약 #${_esc(String(contract.no).padStart(4,'0'))} · ${_esc(contract.projectName)}</span>
+        <span class="sub">계약 ${_esc(contractCode(contract))} · ${_esc(contract.projectName)}</span>
       </h2>
 
       ${etc.length > 0 ? `

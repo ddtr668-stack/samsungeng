@@ -48,7 +48,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
       if (month !== 'all' && (!c.contractDate || c.contractDate.substring(5,7) !== month)) return false;
       if (search) {
         const q = search.toLowerCase();
-        const hay = `${c.no} ${c.projectName} ${c.client} ${c.category} ${c.subcontractor||''} ${c.manager||''}`.toLowerCase();
+        const hay = `${c.no} ${c.projectName} ${c.client} ${c.category} ${c.subcontractor||''} ${c.manager||''} ${c.managerCode||''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -167,8 +167,8 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
           <table className="tbl">
             <thead>
               <tr>
-                <th className="sortable" onClick={() => toggleSort('no')} style={{width:64}}>
-                  NO <span className="sarr">{sortKey==='no' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
+                <th className="sortable" onClick={() => toggleSort('no')} style={{width:104}}>
+                  계약번호 <span className="sarr">{sortKey==='no' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
                 </th>
                 <th className="sortable" onClick={() => toggleSort('contractDate')} style={{width:88}}>
                   계약월 <span className="sarr">{sortKey==='contractDate' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
@@ -198,7 +198,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
               )}
               {paged.map(c => (
                 <tr key={c.id ?? c.no} className="clickable" onClick={() => onSelectContract(c.id ?? c.no)}>
-                  <td className="num tnum" style={{fontWeight:600,color:'var(--ink-2)'}}>#{c.no}</td>
+                  <td className="tnum" style={{fontWeight:600,color:'var(--ink-2)',whiteSpace:'nowrap'}} title={`전체 번호 #${c.no}`}>{contractCode(c)}</td>
                   <td className="num tnum">{fmtMonthShort(c.contractDate)}</td>
                   <td><CatTag cat={c.category}/></td>
                   <td style={{fontSize:12.5,color:'var(--ink-2)',fontWeight:500,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.client}</td>

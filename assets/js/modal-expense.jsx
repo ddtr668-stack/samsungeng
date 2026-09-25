@@ -730,7 +730,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       onClose={onClose}
       width="wide"
       title="🧾 설치비 지급 품의서 생성"
-      subtitle={`계약 #${contract.no} · ${contract.projectName}`}
+      subtitle={`계약 ${contractCode(contract)} · ${contract.projectName}`}
       footer={
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', width:'100%', gap:8}}>
           <div style={{fontSize:11, color:'var(--ink-3)'}}>

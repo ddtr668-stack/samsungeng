@@ -15,8 +15,9 @@
 //   - 권한: admin(관리자) · editor(편집) · viewer(조회)
 //           + ownOnly: 본인이 담당자인 계약만 보기/수정
 //
-// ▶ 계약 담당자: 스프레드시트의 "계약담당자" 시트 (계약번호 · 담당자)
-//   처음 한 번 자동 생성되며, 기존 계약은 모두 SG_DEFAULT_MANAGER_ 로 채워집니다.
+// ▶ 계약 담당자: 스프레드시트의 "계약담당자" 시트 (계약번호 · 담당자 · 담당자번호)
+//   자동 생성되며, 기존 계약은 모두 SG_DEFAULT_MANAGER_ 로 채워집니다.
+//   화면에는 담당자별 번호 "이상규-001" 로 표시 (담당자가 바뀌면 새 담당자의 다음 번호)
 // ============================================================
 
 var SG_SESSION_DAYS_ = 30;
@@ -198,35 +199,69 @@ function SG_contractNoOf_(route, params, payload) {
   return null;
 }
 
-// ─── 계약 담당자 시트 ───
+// ─── 계약 담당자 시트 (계약번호 · 담당자 · 담당자번호) ───
+// 담당자번호: 담당자마다 따로 매기는 번호 → 화면에는 "이상규-001" 처럼 표시
+// 내부 계약번호(NO)는 그대로 두므로 수금·지출 기록은 영향 없음
 function SG_getManagerSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(SG_MANAGER_SHEET_);
-  if (sh) return sh;
-  sh = ss.insertSheet(SG_MANAGER_SHEET_);
-  sh.getRange(1, 1, 1, 2).setValues([['계약번호', '담당자']]).setFontWeight('bold');
-  sh.setFrozenRows(1);
-  // 기존 계약은 모두 기본 담당자로 채움
-  var seen = {};
-  var rows = [];
-  readContracts_().forEach(function (c) {
-    if (!c.no || seen[c.no]) return;
-    seen[c.no] = true;
-    rows.push([c.no, SG_DEFAULT_MANAGER_]);
-  });
-  if (rows.length) sh.getRange(2, 1, rows.length, 2).setValues(rows);
+  if (!sh) {
+    sh = ss.insertSheet(SG_MANAGER_SHEET_);
+    sh.setFrozenRows(1);
+  }
+  if (String(sh.getRange(1, 3).getValue() || '') !== '담당자번호') {
+    sh.getRange(1, 1, 1, 3).setValues([['계약번호', '담당자', '담당자번호']]).setFontWeight('bold');
+  }
   return sh;
 }
 
-function SG_readManagers_() {
-  var sh = SG_getManagerSheet_();
+// 시트 전체 읽기 → { no: { name, seq, row } }
+function SG_readManagerRows_(sh) {
   var last = sh.getLastRow();
   var map = {};
   if (last < 2) return map;
-  sh.getRange(2, 1, last - 1, 2).getValues().forEach(function (r) {
+  sh.getRange(2, 1, last - 1, 3).getValues().forEach(function (r, i) {
     var no = Number(r[0]);
-    if (no && !(no in map)) map[no] = String(r[1] || '').trim();
+    if (!no || (no in map)) return;
+    map[no] = { name: String(r[1] || '').trim() || SG_DEFAULT_MANAGER_, seq: Number(r[2]) || 0, row: i + 2 };
   });
+  return map;
+}
+
+function SG_readManagers_() {
+  var map = SG_readManagerRows_(SG_getManagerSheet_());
+  var out = {};
+  Object.keys(map).forEach(function (no) { out[no] = map[no].name; });
+  return out;
+}
+
+function SG_maxSeq_(map, name) {
+  var max = 0;
+  Object.keys(map).forEach(function (no) { if (map[no].name === name && map[no].seq > max) max = map[no].seq; });
+  return max;
+}
+
+// 시트에 없는 계약(기본 담당자로 추가)과 번호가 비어 있는 행을 채움 (계약번호 순)
+function SG_syncManagers_(contracts) {
+  var sh = SG_getManagerSheet_();
+  var map = SG_readManagerRows_(sh);
+  var nos = [];
+  var seen = {};
+  contracts.forEach(function (c) { var n = Number(c.no); if (n && !seen[n]) { seen[n] = true; nos.push(n); } });
+  nos.sort(function (a, b) { return a - b; });
+
+  var appends = [];
+  var fills = [];
+  nos.forEach(function (no) {
+    var m = map[no];
+    if (m && m.seq) return;
+    var name = m ? m.name : SG_DEFAULT_MANAGER_;
+    var seq = SG_maxSeq_(map, name) + 1;
+    if (m) { m.seq = seq; fills.push(m); }
+    else { map[no] = { name: name, seq: seq, row: 0 }; appends.push([no, name, seq]); }
+  });
+  fills.forEach(function (m) { sh.getRange(m.row, 3).setValue(m.seq); });
+  if (appends.length) sh.getRange(sh.getLastRow() + 1, 1, appends.length, 3).setValues(appends);
   return map;
 }
 
@@ -234,23 +269,39 @@ function SG_getManagerOf_(no) {
   return SG_readManagers_()[Number(no)] || SG_DEFAULT_MANAGER_;
 }
 
+// 담당자 지정 (바뀌면 새 담당자의 다음 번호를 부여) → { name, seq }
 function SG_setManagerOf_(no, name) {
   var sh = SG_getManagerSheet_();
+  var map = SG_readManagerRows_(sh);
+  no = Number(no);
+  var m = map[no];
+  if (m && m.name === name && m.seq) return { name: name, seq: m.seq };
+  var seq = SG_maxSeq_(map, name) + 1;
   var last = sh.getLastRow();
   var found = false;
   if (last >= 2) {
-    var nos = sh.getRange(2, 1, last - 1, 1).getValues();
-    for (var i = 0; i < nos.length; i++) {
-      if (Number(nos[i][0]) === Number(no)) { sh.getRange(i + 2, 2).setValue(name); found = true; }
+    var col = sh.getRange(2, 1, last - 1, 1).getValues();
+    for (var i = 0; i < col.length; i++) {
+      if (Number(col[i][0]) === no) { sh.getRange(i + 2, 2, 1, 2).setValues([[name, seq]]); found = true; }
     }
   }
-  if (!found) sh.appendRow([Number(no), name]);
+  if (!found) sh.appendRow([no, name, seq]);
+  return { name: name, seq: seq };
 }
 
-// 계약 목록에 담당자를 붙이고, ownOnly 사용자는 본인 담당만 남김
+function SG_managerCode_(name, seq) {
+  return name + '-' + ('00' + seq).slice(-Math.max(3, String(seq).length));
+}
+
+// 계약 목록에 담당자·담당자번호를 붙이고, ownOnly 사용자는 본인 담당만 남김
 function SG_applyManagers_(contracts, user) {
-  var map = SG_readManagers_();
-  contracts.forEach(function (c) { c.manager = map[Number(c.no)] || SG_DEFAULT_MANAGER_; });
+  var map = SG_syncManagers_(contracts);
+  contracts.forEach(function (c) {
+    var m = map[Number(c.no)] || { name: SG_DEFAULT_MANAGER_, seq: 0 };
+    c.manager = m.name;
+    c.managerNo = m.seq;
+    c.managerCode = m.seq ? SG_managerCode_(m.name, m.seq) : '';
+  });
   if (user && user.ownOnly && user.role !== 'admin') {
     return contracts.filter(function (c) { return c.manager === (user.name || ''); });
   }
@@ -390,9 +441,10 @@ function SG_apiSetManager_(payload) {
   var name = String(p.manager || '').trim();
   if (!no || !name) return errorOut_('계약번호와 담당자가 필요합니다.', 'BAD_INPUT');
   var before = SG_getManagerOf_(no);
-  SG_setManagerOf_(no, name);
-  try { logChange_('담당자 변경', '#' + no, [{ field: 'manager', label: '담당자', before: before, after: name }]); } catch (err) {}
-  return jsonOut_({ ok: true, no: no, manager: name });
+  var r = SG_setManagerOf_(no, name);
+  var code = SG_managerCode_(r.name, r.seq);
+  try { logChange_('담당자 변경', '#' + no, [{ field: 'manager', label: '담당자', before: before, after: name + ' (' + code + ')' }]); } catch (err) {}
+  return jsonOut_({ ok: true, no: no, manager: name, managerNo: r.seq, managerCode: code });
 }
 
 function SG_readAppSettings_() {

@@ -65,7 +65,7 @@ const ExpenseContractHeader = ({ contract, paidTotal, paidPct, paySplit, timelin
         <div style={{minWidth:0, flex:1}}>
           <div style={{display:'flex', alignItems:'center', gap:6, marginBottom:3, flexWrap:'wrap'}}>
             <span style={{fontSize:10.5, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.05em'}}>
-              계약 #{String(c.no || '').padStart(4,'0')}
+              계약 {contractCode(c)}
             </span>
             {c.category && (
               <span style={{padding:'1px 8px', fontSize:10, fontWeight:700, background:'var(--green-50)', color:'var(--green-800)', border:'1px solid #C9DFD1', borderRadius:10}}>

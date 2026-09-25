@@ -391,7 +391,7 @@ const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
               <div key={(c.id ?? c.no) + '-recent'}
                    onClick={() => onSelectContract(c.id ?? c.no)}
                    style={{display:'flex',alignItems:'center',gap:12,padding:'12px 4px',borderBottom:'1px dashed var(--line)',cursor:'pointer'}}>
-                <div style={{fontSize:11.5,color:'var(--ink-4)',fontVariantNumeric:'tabular-nums',width:34,fontWeight:600}}>#{c.no}</div>
+                <div style={{fontSize:11.5,color:'var(--ink-4)',fontVariantNumeric:'tabular-nums',minWidth:34,fontWeight:600,whiteSpace:'nowrap'}}>{contractCode(c)}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:13,fontWeight:600,color:'var(--ink-1)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',letterSpacing:'-0.01em'}}>{c.projectName || '—'}</div>
                   <div style={{fontSize:11.5,color:'var(--ink-3)',marginTop:3,display:'flex',gap:6,alignItems:'center'}}>

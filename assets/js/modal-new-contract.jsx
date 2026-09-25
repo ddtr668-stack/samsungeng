@@ -66,7 +66,7 @@ const NewContractModal = ({ open, onClose, onCreated, data }) => {
         incidental: Number(form.incidental) || 0,
         salesCost: Number(form.salesCost) || 0,
       });
-      toast?.(`계약 #${res.contract.no} 등록 완료`, 'success');
+      toast?.(`계약 ${contractCode(res.contract)} 등록 완료`, 'success');
       onCreated?.(res.contract);
       onClose();
     } catch (e) {

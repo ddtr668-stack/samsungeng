@@ -209,7 +209,7 @@ const SiteInfoModal = ({ open, contract, onClose, onSave, saving }) => {
               }}>🏗️</span>
               현장설치정보
             </div>
-            <div className="modal-sub">계약 #{String(contract?.no || '').padStart(4,'0')} · {contract?.client || ''}</div>
+            <div className="modal-sub">계약 {contractCode(contract)} · {contract?.client || ''}</div>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="닫기">
             <Icon name="x" size={16}/>
