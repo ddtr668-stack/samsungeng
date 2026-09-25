@@ -2,15 +2,12 @@
    화면 7 · 리포트 · 통계
 ═══════════════════════════════════════════════════════════════ */
 
-const REPORT_MANAGER_KEY = 'hb.reportManager';
-
-const ScreenReports = ({ data: allData }) => {
+const ScreenReports = ({ data: allData, viewManager, onManagerChange }) => {
   const [tab, setTab] = useState('category');  // category | monthly | yearly
   // ─── 담당자 선택 (대시보드와 같은 방식으로 선택한 담당자의 계약만 재집계) ───
   const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean))].sort(), [allData]);
-  const [manager, setManagerSel] = useState(() => { try { return localStorage.getItem(REPORT_MANAGER_KEY) || 'all'; } catch { return 'all'; } });
-  const selManager = manager !== 'all' && !managers.includes(manager) ? 'all' : manager;
-  const pickManager = (v) => { setManagerSel(v); try { localStorage.setItem(REPORT_MANAGER_KEY, v); } catch {} };
+  const selManager = viewManager && viewManager !== 'all' && managers.includes(viewManager) ? viewManager : 'all';
+  const pickManager = (v) => onManagerChange?.(v);
   const data = useMemo(() => buildDashboardView(allData, selManager, null), [allData, selManager]);
   const period = useMemo(() => {
     const yms = data.contracts.map(c => (c.contractDate || '').substring(0, 7)).filter(v => /^\d{4}-\d{2}$/.test(v)).sort();

@@ -10,6 +10,59 @@ const contractCode = (c) => {
   return '#' + String(c.no || '').padStart(4, '0');
 };
 
+// ─── 담당자·기간으로 계약을 걸러 요약·통계를 다시 계산 (대시보드·리포트·각 목록 화면 공통) ───
+// range: { from:'YYYY-MM' | '', to:'YYYY-MM' | '' } — 계약일 기준 기간
+const buildDashboardView = (data, manager, range) => {
+  const from = (range && range.from) || '';
+  const to = (range && range.to) || '';
+  if ((!manager || manager === 'all') && !from && !to) return data;
+  const contracts = data.contracts.filter(c => {
+    if (manager && manager !== 'all' && c.manager !== manager) return false;
+    if (from || to) {
+      const ym = (c.contractDate || '').substring(0, 7);
+      if (!ym) return false;
+      if (from && ym < from) return false;
+      if (to && ym > to) return false;
+    }
+    return true;
+  });
+  const summary = { totalAmount:0, paidAmount:0, balance:0, profit:0, statusCounts:{ 완료:0, 진행중:0, 미진행:0 } };
+  const cat = {}, mon = {};
+  contracts.forEach(c => {
+    summary.totalAmount += c.totalAmount || 0; summary.paidAmount += c.paidAmount || 0;
+    summary.balance += c.balance || 0; summary.profit += c.profit || 0;
+    if (c.status === '완료') summary.statusCounts.완료++;
+    else if (c.status === '진행중') summary.statusCounts.진행중++;
+    else summary.statusCounts.미진행++;
+    const k = c.category || '기타';
+    cat[k] = cat[k] || { name:k, count:0, total:0, paid:0, balance:0, profit:0 };
+    cat[k].count++; cat[k].total += c.totalAmount || 0; cat[k].paid += c.paidAmount || 0; cat[k].balance += c.balance || 0; cat[k].profit += c.profit || 0;
+    if (c.contractDate) {
+      const ym = c.contractDate.substring(0, 7);
+      mon[ym] = mon[ym] || { month:ym, count:0, total:0, paid:0, balance:0, profit:0 };
+      mon[ym].count++; mon[ym].total += c.totalAmount || 0; mon[ym].paid += c.paidAmount || 0; mon[ym].balance += c.balance || 0; mon[ym].profit += c.profit || 0;
+    }
+  });
+  return {
+    ...data,
+    contracts,
+    summary,
+    categoryStats: Object.values(cat).map(v => ({ ...v, marginRate: v.total ? v.profit / v.total : 0 })).sort((a, b) => b.total - a.total),
+    monthlyStats: Object.keys(mon).sort().map(k => mon[k]),
+    topBalance: contracts.filter(c => c.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 10),
+    clientStats: (() => {
+      const m = {};
+      contracts.forEach(c => {
+        const k = c.client;
+        m[k] = m[k] || { name:k, count:0, total:0, paid:0, balance:0, categories:{} };
+        m[k].count++; m[k].total += c.totalAmount || 0; m[k].paid += c.paidAmount || 0; m[k].balance += c.balance || 0;
+        m[k].categories[c.category] = true;
+      });
+      return Object.values(m).map(v => ({ ...v, categories: Object.keys(v.categories) })).sort((a, b) => b.total - a.total);
+    })(),
+  };
+};
+
 // ─── 숫자 포맷 ───
 const fmtKRW = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -119,7 +172,7 @@ const NAV = [
   { id:'settings', label:'설정', icon:'settings' },
 ];
 
-const Sidebar = ({ current, onNav, counts, onLogout }) => {
+const Sidebar = ({ current, onNav, counts, onLogout, managers, activeManager, onPickManager }) => {
   return (
     <aside className="side">
       <div className="brand">
@@ -150,6 +203,31 @@ const Sidebar = ({ current, onNav, counts, onLogout }) => {
         ))}
       </nav>
 
+      {/* 담당자별 보기: 누르면 대시보드·계약·미수금·거래처·지출·리포트가 모두 그 담당자 기준으로 바뀜 */}
+      {managers && managers.length > 1 && (
+        <>
+          <div className="nav-label">담당자</div>
+          <nav className="nav" style={{maxHeight:220,overflowY:'auto'}}>
+            {[{ name:'all', label:'전체', count: managers.reduce((a, m) => a + m.count, 0) }]
+              .concat(managers.map(m => ({ name: m.name, label: m.name, count: m.count })))
+              .map(m => (
+                <a key={m.name} href="#"
+                   className={(activeManager || 'all') === m.name ? 'active' : ''}
+                   title={m.name === 'all' ? '모든 담당자 보기' : `${m.label} 담당 계약만 보기`}
+                   onClick={(e) => { e.preventDefault(); onPickManager?.(m.name); }}>
+                  <span className="ico" style={{display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+                    {m.name === 'all'
+                      ? <Icon name="clients" size={16}/>
+                      : <span style={{width:16,height:16,borderRadius:'50%',background:'rgba(240,237,227,.14)',fontSize:9.5,fontWeight:800,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>{m.label.slice(0, 1)}</span>}
+                  </span>
+                  {m.label}
+                  <span className="count">{m.count}</span>
+                </a>
+              ))}
+          </nav>
+        </>
+      )}
+
       <div className="side-foot">
         <div className="me">
           {(() => {
@@ -176,7 +254,7 @@ const Sidebar = ({ current, onNav, counts, onLogout }) => {
 };
 
 // ─── Topbar ───
-const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefresh }) => {
+const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefresh, viewManager, onClearManager }) => {
   const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (!onRefresh || refreshing) return;
@@ -232,6 +310,13 @@ const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefres
         <span className={`source-badge ${source}`} style={{marginLeft:8}}>
           <span className="b-dot"></span>
           {source === 'api' ? '실시간 연동' : source === 'cache' ? '캐시 (오프라인)' : source === 'empty' ? '미연결' : '샘플 데이터'}
+        </span>
+      )}
+      {viewManager && viewManager !== 'all' && (
+        <span style={{marginLeft:8,display:'inline-flex',alignItems:'center',gap:6,padding:'3px 6px 3px 10px',borderRadius:999,background:'var(--bronze-50)',border:'1px solid #ECD9AE',color:'var(--bronze-800)',fontSize:11.5,fontWeight:700}}>
+          {viewManager} 담당 보기
+          <button type="button" onClick={onClearManager} title="전체 담당자 보기"
+            style={{border:0,background:'transparent',color:'inherit',cursor:'pointer',fontSize:13,lineHeight:1,padding:'0 2px'}}>✕</button>
         </span>
       )}
 
@@ -380,5 +465,5 @@ Object.assign(window, {
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,
   Icon, Sidebar, Topbar, usePagination, Pager,
   Amt, StatusPill, CatTag, MiniProgress, CardHead,
-  NAV, contractCode,
+  NAV, contractCode, buildDashboardView,
 });

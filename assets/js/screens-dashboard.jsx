@@ -3,7 +3,6 @@
 ═══════════════════════════════════════════════════════════════ */
 
 // ─── 담당자별 대시보드: 선택한 담당자의 계약만으로 요약·통계를 다시 계산 ───
-const DASH_MANAGER_KEY = 'hb.dashManager';
 const DASH_RANGE_KEY = 'hb.dashRange';
 
 // ─── 기간 선택 (월 단위) ───
@@ -73,53 +72,11 @@ const DateRangePicker = ({ range, onChange, minYm, maxYm }) => {
     </div>
   );
 };
-// range: { from:'YYYY-MM' | '', to:'YYYY-MM' | '' } — 계약일 기준 기간
-const buildDashboardView = (data, manager, range) => {
-  const from = (range && range.from) || '';
-  const to = (range && range.to) || '';
-  if ((!manager || manager === 'all') && !from && !to) return data;
-  const contracts = data.contracts.filter(c => {
-    if (manager && manager !== 'all' && c.manager !== manager) return false;
-    if (from || to) {
-      const ym = (c.contractDate || '').substring(0, 7);
-      if (!ym) return false;
-      if (from && ym < from) return false;
-      if (to && ym > to) return false;
-    }
-    return true;
-  });
-  const summary = { totalAmount:0, paidAmount:0, balance:0, profit:0, statusCounts:{ 완료:0, 진행중:0, 미진행:0 } };
-  const cat = {}, mon = {};
-  contracts.forEach(c => {
-    summary.totalAmount += c.totalAmount || 0; summary.paidAmount += c.paidAmount || 0;
-    summary.balance += c.balance || 0; summary.profit += c.profit || 0;
-    if (c.status === '완료') summary.statusCounts.완료++;
-    else if (c.status === '진행중') summary.statusCounts.진행중++;
-    else summary.statusCounts.미진행++;
-    const k = c.category || '기타';
-    cat[k] = cat[k] || { name:k, count:0, total:0, paid:0, balance:0, profit:0 };
-    cat[k].count++; cat[k].total += c.totalAmount || 0; cat[k].paid += c.paidAmount || 0; cat[k].balance += c.balance || 0; cat[k].profit += c.profit || 0;
-    if (c.contractDate) {
-      const ym = c.contractDate.substring(0, 7);
-      mon[ym] = mon[ym] || { month:ym, count:0, total:0, paid:0, balance:0, profit:0 };
-      mon[ym].count++; mon[ym].total += c.totalAmount || 0; mon[ym].paid += c.paidAmount || 0; mon[ym].balance += c.balance || 0; mon[ym].profit += c.profit || 0;
-    }
-  });
-  return {
-    ...data,
-    contracts,
-    summary,
-    categoryStats: Object.values(cat).map(v => ({ ...v, marginRate: v.total ? v.profit / v.total : 0 })).sort((a, b) => b.total - a.total),
-    monthlyStats: Object.keys(mon).sort().map(k => mon[k]),
-    topBalance: contracts.filter(c => c.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 10),
-  };
-};
-
-const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
+const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, onManagerChange }) => {
+  // 담당자: 사이드바·이 화면 선택이 앱 전체에 공통 적용
   const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean))].sort(), [allData]);
-  const [manager, setManagerSel] = useState(() => { try { return localStorage.getItem(DASH_MANAGER_KEY) || 'all'; } catch { return 'all'; } });
-  const selManager = manager !== 'all' && !managers.includes(manager) ? 'all' : manager;
-  const pickManager = (v) => { setManagerSel(v); try { localStorage.setItem(DASH_MANAGER_KEY, v); } catch {} };
+  const selManager = viewManager && viewManager !== 'all' && managers.includes(viewManager) ? viewManager : 'all';
+  const pickManager = (v) => onManagerChange?.(v);
   // 기간 선택 (계약일 기준 · 브라우저에 기억)
   const [range, setRangeState] = useState(() => { try { return JSON.parse(localStorage.getItem(DASH_RANGE_KEY)) || { from:'', to:'' }; } catch { return { from:'', to:'' }; } });
   const setRange = (r) => { setRangeState(r); try { localStorage.setItem(DASH_RANGE_KEY, JSON.stringify(r)); } catch {} };
