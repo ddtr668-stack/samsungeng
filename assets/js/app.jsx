@@ -31,6 +31,7 @@ const App = () => {
   const [globalSearch, setGlobalSearch] = useState('');
   const [newContractOpen, setNewContractOpen] = useState(false);
   const [expenseContract, setExpenseContract] = useState(null);
+  const [bulkExpenseOpen, setBulkExpenseOpen] = useState(false);
   // 설정 변경 시 사이드바 등 리렌더용 카운터
   const [uiTick, setUiTick] = useState(0);
   const bumpUi = useCallback(() => setUiTick(t => t + 1), []);
@@ -218,7 +219,8 @@ const App = () => {
             crumbs={crumbs}
             searchValue={globalSearch}
             onSearch={handleGlobalSearch}
-            onAddContract={() => setNewContractOpen(true)}
+            onAddContract={() => route.screen === 'expense' ? setBulkExpenseOpen(true) : setNewContractOpen(true)}
+            addLabel={route.screen === 'expense' ? '지출품의서' : '신규 계약'}
             source={data._source}
             onRefresh={refresh}
             viewManager={route.screen === 'detail' || route.screen === 'settings' ? 'all' : activeManager}
@@ -248,7 +250,7 @@ const App = () => {
             <ScreenClients data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onUpdated={refresh}/>
           )}
           {route.screen === 'expense' && (
-            <ScreenExpense data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
+            <ScreenExpense data={viewData} onOpenBulk={() => setBulkExpenseOpen(true)} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
           )}
           {route.screen === 'reports' && (
             <ScreenReports data={data} viewManager={activeManager} onManagerChange={setViewManager}/>
@@ -258,6 +260,10 @@ const App = () => {
           )}
         </main>
       </div>
+
+      {bulkExpenseOpen && (
+        <BulkExpenseModal open={true} onClose={() => setBulkExpenseOpen(false)} data={viewData} onSaved={refresh}/>
+      )}
 
       <NewContractModal
         open={newContractOpen}
