@@ -2,7 +2,7 @@
    화면 2 · 계약 리스트 (검색·필터·정렬·페이지네이션)
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew }) => {
+const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew, managerOptions, viewManager, onManagerChange }) => {
   const [search, setSearch] = useState(initialSearch);
   const [category, setCategory] = useState('all');
   const [status, setStatus] = useState('all');
@@ -95,7 +95,11 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
           </div>
         </div>
         <div className="hstack">
-          <button className="btn-ghost"><Icon name="download" size={14}/>엑셀 내보내기</button>
+          <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
+          <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('contracts',
+            ['계약번호','전체번호','계약일','담당자','구분','거래처','프로젝트명','도급업체','계약금','수금액','잔금','이윤','진행률','상태'],
+            sorted.map(c => [contractCode(c), c.no, c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.subcontractor || '', c.totalAmount, c.paidAmount, c.balance, c.profit, Math.round((c.progress || 0) * 100) + '%', c.status]))}>
+            <Icon name="download" size={14}/>엑셀 내보내기</button>
         </div>
       </div>
 
@@ -126,13 +130,6 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
             <option value="진행중">진행중</option>
             <option value="미진행">미진행</option>
           </select>
-
-          {managers.length > 1 && (
-            <select className="filter-select" value={manager} onChange={e => setManager(e.target.value)}>
-              <option value="all">담당자 · 전체</option>
-              {managers.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          )}
 
           <select className="filter-select" value={year} onChange={e => setYear(e.target.value)}>
             <option value="all">연도 · 전체</option>

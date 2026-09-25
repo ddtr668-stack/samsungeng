@@ -74,8 +74,8 @@ const DateRangePicker = ({ range, onChange, minYm, maxYm }) => {
 };
 const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, onManagerChange }) => {
   // 담당자: 사이드바·이 화면 선택이 앱 전체에 공통 적용
-  const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean))].sort(), [allData]);
-  const selManager = viewManager && viewManager !== 'all' && managers.includes(viewManager) ? viewManager : 'all';
+  const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean).concat(viewManager && viewManager !== 'all' ? [viewManager] : []))].sort(), [allData, viewManager]);
+  const selManager = viewManager && viewManager !== 'all' ? viewManager : 'all';
   const pickManager = (v) => onManagerChange?.(v);
   // 기간 선택 (계약일 기준 · 브라우저에 기억)
   const [range, setRangeState] = useState(() => { try { return JSON.parse(localStorage.getItem(DASH_RANGE_KEY)) || { from:'', to:'' }; } catch { return { from:'', to:'' }; } });
