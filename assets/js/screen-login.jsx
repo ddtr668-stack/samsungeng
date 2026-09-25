@@ -2,7 +2,7 @@
    로그인 · 회원가입 화면 (Apps Script Auth.gs 에서 확인)
 ═══════════════════════════════════════════════════════════════ */
 
-const LoginScreen = ({ onLoggedIn }) => {
+const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
   const needUrl = !hasApiUrl();
   const [showUrl, setShowUrl] = useState(needUrl);
   const [serverUrl, setServerUrl] = useState(() => getApiUrl());
@@ -10,7 +10,7 @@ const LoginScreen = ({ onLoggedIn }) => {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(initialNotice || '');
   const [mode, setMode] = useState('login');   // 'login' | 'signup'
   const [form, setForm] = useState({ id:'', password:'', password2:'', name:'', phone:'', dept:'' });
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
