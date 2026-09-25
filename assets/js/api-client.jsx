@@ -133,6 +133,8 @@ const api = {
   async login(id, password) {
     const r = await apiFetch('login', { method:'POST', body:{ id, password } });
     setAuth(r.token, r.user);
+    // 새로 로그인했으니 '마지막 사용 시각'을 지금으로 (예전 값 때문에 곧바로 자동 로그아웃되는 것 방지)
+    try { localStorage.setItem('hb.lastActivity', String(Date.now())); } catch {}
     applyServerSettings(r.settings);
     return r;
   },
@@ -140,6 +142,7 @@ const api = {
     const token = getAuthToken();
     setAuth(null, null);
     cache.clear();
+    try { localStorage.removeItem('hb.lastActivity'); } catch {}
     if (token) { try { await apiFetch('logout', { params:{ token } }); } catch {} }
   },
   async changePassword(currentPassword, newPassword) {

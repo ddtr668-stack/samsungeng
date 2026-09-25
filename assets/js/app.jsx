@@ -147,7 +147,7 @@ const App = () => {
   }, []);
 
   if (loading) return <div className="boot">불러오는 중…</div>;
-  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLoginNotice(''); setRoute({ screen:'dashboard' }); load(); }}/>;
+  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLastActivity(Date.now()); setLoginNotice(''); setRoute({ screen:'dashboard' }); load(); }}/>;
   if (error && !data) return (
     <div style={{padding:40,fontSize:14,color:'var(--ink-2)'}}>
       <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>데이터 로드 실패</div>
