@@ -30,7 +30,7 @@ const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
         <div>
           <h1><span className="hl">종합 경영</span> 대시보드</h1>
           <div className="page-sub">
-            2026년 9월 16일 (수) · 기준일 · 계약관리_v1.3 · 총 <b>{s.totalAmount > 0 ? '105건' : '0건'}</b> 계약 집계
+            2026년 9월 16일 (수) · 기준일 · {typeof getSheetName === 'function' ? getSheetName() : '계약관리'} · 총 <b>{s.totalAmount > 0 ? '105건' : '0건'}</b> 계약 집계
           </div>
         </div>
         <div className="hstack">

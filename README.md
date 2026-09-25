@@ -1,127 +1,68 @@
-# 삼성이엔지 계약관리 대시보드
+# 삼성이엔지 계약관리 대시보드 · 내 PC 서버판
 
-주식회사 삼성이엔지의 계약·수금·매입·거래처 통합 관리 대시보드입니다.
-Google 스프레드시트를 데이터베이스로 사용하며, Google Apps Script Web API를 통해 실시간으로 연동됩니다.
+로컬 PC 를 웹서버로 돌려 대시보드를 구동하는 프로젝트입니다.
+(React 18 + Babel Standalone · 빌드 없이 실행 · 데이터는 Google 스프레드시트 + Apps Script)
 
----
+> ⚠️ **이 저장소는 반드시 Private(비공개)로 유지하세요.**
+> `assets/data/app-data.json` 에 실제 거래처·계약금액 정보가 들어 있습니다.
 
-## 🌐 라이브 데모
+## 빠른 시작
 
-배포 후 아래 URL로 접속: `https://<GitHub-사용자명>.github.io/<저장소명>/`
+| OS | 실행 파일 |
+|----|-----------|
+| Windows | `서버_실행_Windows.bat` (더블클릭) |
+| macOS / Linux | `서버_실행_Mac.command` (더블클릭) |
+| Node.js 없이 | `서버_실행_Python.py` (Python 3.6+) |
 
----
+3초 뒤 브라우저가 자동으로 `http://localhost:3000` 을 엽니다.
+(React 등 라이브러리를 인터넷(CDN)에서 받아오므로 **인터넷 연결이 필요**합니다.)
 
-## 📦 파일 구조
+사전 준비: Node.js LTS 또는 Python 3 중 **하나만** 설치.
+(Python 은 설치 시 "Add Python to PATH" 체크)
+
+## 첫 실행 후 설정
+
+설정 값은 **브라우저(localStorage)에 저장**되므로 저장소에는 올라가지 않습니다. PC/브라우저를 바꾸면 다시 입력해야 합니다.
+
+1. **[설정] → GAS 웹앱 URL** — 스프레드시트 Apps Script 배포 URL
+2. **[설정] → 연결된 스프레드시트** — 표시 이름 · 시트 URL
+3. **[설정] → Google Drive 인증 정보** (선택) — API Key + Client ID
+4. **GAS 재배포** — `gas-backend/` 의 최신 `.gs` 로 교체 후 "새 버전" 배포
+
+GAS URL 을 등록하지 않으면 `assets/data/app-data.json` 의 저장된 데이터로 화면만 표시됩니다(읽기 전용 데모).
+
+## 폴더 구조
 
 ```
-├── index.html              ← 진입점
+samsung-eng-dashboard/
+├── index.html                    진입점 (스크립트 로딩 순서 정의)
 ├── assets/
-│   ├── app.css             ← 전체 스타일
-│   └── js/                 ← React 컴포넌트 (14개)
-│       ├── app.jsx
-│       ├── shared.jsx
-│       ├── api-client.jsx
-│       ├── components-modal.jsx
-│       ├── screens-*.jsx   ← 각 화면
-│       └── modal-*.jsx     ← 모달
-├── .gitignore
+│   ├── app.css                   전체 스타일
+│   ├── data/app-data.json        GAS 미연결 시 표시되는 저장 데이터 (실데이터 · Private 필수)
+│   ├── images/                   로고 · 이미지
+│   ├── samples/                  엑셀 가져오기용 양식 (설치비 / 제품 내역서)
+│   └── js/                       React 컴포넌트 (.jsx)
+│       ├── modal-expense.jsx         지출품의서 작성 화면
+│       ├── modal-expense-parts.jsx   지출품의서 하위 컴포넌트
+│       └── expense-print.jsx         지출품의서 A4 세로 인쇄물 · 미리보기 (손익 계산 포함)
+├── gas-backend/                  Google Apps Script 백엔드
+│   ├── DashboardApi.gs
+│   ├── ExpenseRequest.gs
+│   └── PATCH_EDITABLE_FIELDS.gs
+├── 서버_실행_Windows.bat · 서버_실행_Mac.command · 서버_실행_Python.py
+├── 사용법.txt · 변경사항_v2.md · 진단.html
+├── GITHUB_업로드_가이드.md       GitHub 에 올리고 내 PC 에서 검증하는 방법
+├── .gitignore · .gitattributes
 └── README.md
 ```
 
----
+## 트러블슈팅
 
-## 🚀 GitHub Pages 배포 방법
+- **포트 3000 사용 중** — `서버_실행_Python.py` 상단 `PORT = 3000` 변경, 또는 `netstat -ano | findstr :3000` 로 점유 프로그램 종료
+- **macOS "확인되지 않은 개발자"** — 파일 우클릭 → 열기
+- **무한 로딩 / JSX 오류** — F12 → Console 확인. `index.html` 을 더블클릭(file://)으로 열지 말고 반드시 서버 스크립트로 접속
+- **GAS 저장 실패** — 설정의 웹앱 URL 확인, `.gs` 수정 후 "새 버전"으로 재배포했는지 확인
 
-### 1. GitHub 저장소 만들기
-1. https://github.com/new 이동
-2. Repository name 입력 (예: `contract-dashboard`)
-3. **Public** 또는 **Private** 선택
-   - Private을 원하면 계정이 **GitHub Pro (유료)** 이거나 조직 계정이어야 GitHub Pages 사용 가능
-4. **Create repository** 클릭
+## 라이선스
 
-### 2. 파일 업로드
-**옵션 A — 웹에서 드래그 앤 드롭 (가장 쉬움)**
-1. 방금 만든 저장소 페이지에서 **"uploading an existing file"** 링크 클릭
-2. 이 폴더의 **모든 파일**을 브라우저로 드래그 앤 드롭
-3. Commit changes 클릭
-
-**옵션 B — Git 명령어**
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/<사용자명>/<저장소명>.git
-git push -u origin main
-```
-
-### 3. GitHub Pages 활성화
-1. 저장소 → **Settings** → 좌측 **Pages** 메뉴
-2. **Source** : `Deploy from a branch` 선택
-3. **Branch** : `main` / `/ (root)` 선택 → **Save**
-4. 1~2분 후 상단에 URL 표시: `https://<사용자명>.github.io/<저장소명>/`
-
-### 4. Apps Script URL 등록
-1. 배포된 URL로 접속 → 자동으로 **설정 화면**으로 이동됨
-2. Apps Script 웹앱 URL 붙여넣기 → **저장** → **연결 테스트**
-3. "pong 응답 확인" 이 뜨면 성공 ✅
-
----
-
-## ⚠️ 보안 주의사항
-
-### 🔴 절대 커밋하면 안 되는 파일
-- `계약관리.xlsx` (원본 엑셀 데이터)
-- 실제 거래처·매출 데이터가 담긴 JSON
-- Apps Script 웹앱 URL 자체 (코드에 하드코딩 금지)
-
-`.gitignore`에 이미 위 파일 확장자들이 등록되어 있습니다.
-
-### 🔒 Private 저장소 권장
-계약·매출 정보를 다루는 시스템이므로 **Private 저장소** 사용을 강력히 권장합니다.
-
-### 🔐 접근 제어 옵션
-GitHub Pages는 기본적으로 URL만 알면 누구나 접속 가능합니다.
-
-**Public URL 노출을 막으려면:**
-1. **Cloudflare Access** 앞단에 붙이기 (Google 로그인 필수화)
-2. **Netlify + Password Protection** 으로 배포 대체
-3. 또는 사내망 웹서버에 배포
-
-**데이터 자체는 안전:** Apps Script 웹앱을 "조직 내 사용자"로 배포했다면 URL을 알아도 로그인 없이는 데이터 조회 불가능합니다.
-
----
-
-## 🔧 백엔드 설정 (Apps Script)
-
-이 저장소는 **프런트엔드만** 포함합니다. 백엔드(`DashboardApi.gs`)는 별도로 Google Apps Script에 붙여넣어야 합니다.
-
-**설치 절차:** 별도 배포한 `연동 가이드.html` 참조
-
-**요약:**
-1. 계약관리 스프레드시트 → 확장 프로그램 → Apps Script
-2. 새 파일 생성 → `DashboardApi.gs` 코드 붙여넣기
-3. 배포 → 새 배포 → 웹 앱
-4. 발급된 URL을 대시보드 설정에 등록
-
----
-
-## 🐛 트러블슈팅
-
-| 증상 | 원인 | 해결 |
-|---|---|---|
-| 화면이 하얗게 뜸 | Babel 로딩 실패 | 콘솔 확인, 인터넷 재확인 |
-| "연결 실패" | Apps Script 배포 오류 | 액세스 권한을 "조직 내" 이상으로 재배포 |
-| Mixed Content 오류 | HTTP로 접속 | https:// 로 접속 (GitHub Pages는 기본 HTTPS) |
-| CORS 오류 | 배포 설정 문제 | Apps Script 재배포 후 새 URL 등록 |
-| 한글 깨짐 | 파일 인코딩 | UTF-8로 저장되어 있는지 확인 |
-
----
-
-## 📝 라이선스
-
-내부 사용 전용 (Proprietary)
-
----
-
-_v1.0 · 2026.09_
+내부 사용 (주식회사 삼성이엔지 · 한별상회)

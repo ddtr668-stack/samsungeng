@@ -7,6 +7,12 @@
 const API_URL_KEY = 'hb.apiUrl';
 const API_CACHE_KEY = 'hb.dataCache';
 const API_CACHE_TS_KEY = 'hb.dataCacheTs';
+const SHEET_URL_KEY = 'hb.sheetUrl';
+const SHEET_NAME_KEY = 'hb.sheetName';
+
+// 기본값 (기존 하드코딩 값 - 사용자가 재설정하면 덮어씀)
+const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1rUq7yu0pHrp-rln4JjGIslIib_d033ZuzwLD6odtORs/edit';
+const DEFAULT_SHEET_NAME = '계약관리_v1.3';
 
 // ─── API URL 관리 ───
 const getApiUrl = () => (localStorage.getItem(API_URL_KEY) || '').trim();
@@ -16,6 +22,20 @@ const setApiUrl = (url) => {
   else localStorage.removeItem(API_URL_KEY);
 };
 const hasApiUrl = () => !!getApiUrl();
+
+// ─── 스프레드시트 정보 관리 (표시·바로가기용) ───
+const getSheetUrl = () => (localStorage.getItem(SHEET_URL_KEY) || DEFAULT_SHEET_URL).trim();
+const setSheetUrl = (url) => {
+  const trimmed = (url || '').trim();
+  if (trimmed) localStorage.setItem(SHEET_URL_KEY, trimmed);
+  else localStorage.removeItem(SHEET_URL_KEY);
+};
+const getSheetName = () => (localStorage.getItem(SHEET_NAME_KEY) || DEFAULT_SHEET_NAME).trim();
+const setSheetName = (name) => {
+  const trimmed = (name || '').trim();
+  if (trimmed) localStorage.setItem(SHEET_NAME_KEY, trimmed);
+  else localStorage.removeItem(SHEET_NAME_KEY);
+};
 
 // ─── 저수준 fetch ───
 async function apiFetch(route, opts = {}) {
@@ -60,6 +80,28 @@ const api = {
   listClients: () => apiFetch('clients'),
   expenseHistory: () => apiFetch('expenseHistory'),
   generateExpensePdf: (row, payload) => apiFetch('expensePdf', { method:'POST', body:{ row, payload } }),
+  // ─── 수금 누적 관리 ───
+  listPayments: (contractNo) => apiFetch('payments', { params: { contractNo } }),
+  createPayment: (payload) => apiFetch('createPayment', { method:'POST', body: payload }),
+  updatePayment: (payload) => apiFetch('updatePayment', { method:'POST', body: payload }),
+  deletePayment: (no) => apiFetch('deletePayment', { method:'POST', body: { no } }),
+  // ─── 지출품의서 확장 ───
+  expenseByContract: (contractNo) => apiFetch('expenseByContract', { params: { contractNo } }),
+  saveExpense: (payload) => apiFetch('saveExpense', { method:'POST', body: payload }),
+  // 저장된 지출품의서 회차(설치비 기성) 삭제(취소 처리) — payload: { contractNo, no }
+  cancelExpenseRound: (payload) => apiFetch('cancelExpenseRound', { method:'POST', body: payload }),
+  // 도급업체 신규 등록/정보 수정 저장 (도급업체 등록 시트 + 거래처관리 시트에 함께 반영)
+  saveSubcontractor: (payload) => apiFetch('saveSubcontractor', { method:'POST', body: payload }),
+  // 거래처 정보 수정/신규 등록 저장 (거래처관리 시트에만 반영)
+  saveClient: (payload) => apiFetch('saveClient', { method:'POST', body: payload }),
+  // ─── 변경 이력 (상단바 🔔) ───
+  changeLog: () => apiFetch('changeLog'),
+  // ─── 자동 백업(30일 보관) ───
+  getBackupSettings: () => apiFetch('backupSettings'),
+  saveBackupSettings: (payload) => apiFetch('saveBackupSettings', { method:'POST', body: payload }),
+  listBackups: () => apiFetch('backupList'),
+  runBackupNow: () => apiFetch('runBackupNow', { method:'POST', body:{} }),
+  restoreBackup: (payload) => apiFetch('restoreBackup', { method:'POST', body: payload }),
 };
 
 // ─── 캐시 관리 ───
@@ -148,5 +190,9 @@ Object.assign(window, {
   getApiUrl,
   setApiUrl,
   hasApiUrl,
+  getSheetUrl,
+  setSheetUrl,
+  getSheetName,
+  setSheetName,
   apiCache: cache,
 });
