@@ -6,6 +6,7 @@ const App = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [needLogin, setNeedLogin] = useState(false);
   const [route, setRoute] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
     catch { return { screen:'dashboard' }; }
@@ -27,6 +28,8 @@ const App = () => {
     setLoading(true);
     try {
       const res = await loadInitialData();
+      if (res.needLogin) { setNeedLogin(true); setData(null); setError(null); return; }
+      setNeedLogin(false);
       if (!res.data) throw new Error(res.errors?.join(' / ') || '데이터 로드 실패');
       setData(res.data);
       setError(null);
@@ -40,6 +43,20 @@ const App = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 세션 만료 등으로 서버가 로그인을 요구하면 로그인 화면으로
+  useEffect(() => {
+    const onAuth = () => { setNeedLogin(true); setData(null); };
+    window.addEventListener('hb:auth-required', onAuth);
+    return () => window.removeEventListener('hb:auth-required', onAuth);
+  }, []);
+
+  const logout = useCallback(async () => {
+    if (!window.confirm('로그아웃할까요?')) return;
+    await apiClient.logout();
+    setData(null);
+    setNeedLogin(true);
+  }, []);
 
   const refresh = useCallback(async () => {
     const fresh = await refreshData();
@@ -78,6 +95,7 @@ const App = () => {
   }, []);
 
   if (loading) return <div className="boot">불러오는 중…</div>;
+  if (needLogin) return <LoginScreen onLoggedIn={() => { setRoute({ screen:'dashboard' }); load(); }}/>;
   if (error && !data) return (
     <div style={{padding:40,fontSize:14,color:'var(--ink-2)'}}>
       <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>데이터 로드 실패</div>
@@ -107,7 +125,7 @@ const App = () => {
   return (
     <ToastProvider>
       <div className="app">
-        <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts}/>
+        <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}/>
         <main>
           <Topbar
             crumbs={crumbs}

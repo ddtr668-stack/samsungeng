@@ -112,7 +112,7 @@ const NAV = [
   { id:'settings', label:'설정', icon:'settings' },
 ];
 
-const Sidebar = ({ current, onNav, counts }) => {
+const Sidebar = ({ current, onNav, counts, onLogout }) => {
   return (
     <aside className="side">
       <div className="brand">
@@ -143,17 +143,6 @@ const Sidebar = ({ current, onNav, counts }) => {
         ))}
       </nav>
 
-      <div className="nav-label">데이터 소스</div>
-      <nav className="nav">
-        <a href={typeof getSheetUrl === 'function' ? getSheetUrl() : '#'}
-           target="_blank" rel="noreferrer"
-           title={typeof getSheetUrl === 'function' ? getSheetUrl() : ''}>
-          <span className="ico" style={{width:16,height:16,borderRadius:4,background:'#217346',display:'inline-flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:9,fontWeight:800}}>X</span>
-          {typeof getSheetName === 'function' ? getSheetName() : '데이터 시트'}
-          <span style={{marginLeft:'auto',color:'#6E7369',opacity:.6}}><Icon name="external" size={11}/></span>
-        </a>
-      </nav>
-
       <div className="side-foot">
         <div className="me">
           <div className="avatar">이</div>
@@ -162,6 +151,12 @@ const Sidebar = ({ current, onNav, counts }) => {
             <div className="role">주식회사 삼성이엔지</div>
           </div>
         </div>
+        {onLogout && (
+          <button type="button" onClick={onLogout}
+            style={{marginTop:10,width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid rgba(110,115,105,.35)',background:'transparent',color:'inherit',fontSize:12,cursor:'pointer',opacity:.85}}>
+            로그아웃{typeof getAuthUser === 'function' && getAuthUser() ? ` (${getAuthUser().id})` : ''}
+          </button>
+        )}
       </div>
     </aside>
   );
