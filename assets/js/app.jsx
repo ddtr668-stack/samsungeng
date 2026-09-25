@@ -166,13 +166,15 @@ const App = () => {
   );
   if (!data) return null;
 
-  const managerStats = (() => {
+  // 담당자별 보기는 관리자 전용 (관리자가 아니면 목록·선택 칸을 숨기고 항상 '전체' 기준)
+  const adminView = typeof isAdmin === 'function' && isAdmin();
+  const managerStats = !adminView ? [] : (() => {
     const m = {};
     userNames.forEach(n => { m[n] = m[n] || 0; });
     data.contracts.forEach(c => { if (c.manager) m[c.manager] = (m[c.manager] || 0) + 1; });
     return Object.keys(m).sort().map(name => ({ name, count: m[name] }));
   })();
-  const activeManager = viewManager !== 'all' && managerStats.some(x => x.name === viewManager) ? viewManager : 'all';
+  const activeManager = adminView && viewManager !== 'all' && managerStats.some(x => x.name === viewManager) ? viewManager : 'all';
   // 선택한 담당자의 계약만으로 다시 계산한 데이터 (계약 상세·설정·모달은 전체 데이터 사용)
   const viewData = buildDashboardView(data, activeManager, null);
 

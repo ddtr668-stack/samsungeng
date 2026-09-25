@@ -148,7 +148,7 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
           </div>
         </div>
         <div className="hstack">
-          {managers.length > 0 && (
+          {managers.length > 0 && typeof isAdmin === 'function' && isAdmin() && (
             <select className="filter-select" value={selManager} onChange={e => pickManager(e.target.value)}
               title="담당자별 대시보드" style={{height:36,fontSize:13,fontWeight:600}}>
               <option value="all">담당자 · 전체</option>
