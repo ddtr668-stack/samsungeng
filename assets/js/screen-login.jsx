@@ -27,11 +27,15 @@ const LoginScreen = ({ onLoggedIn }) => {
       setPassword('');
       onLoggedIn?.();
     } catch (err) {
-      if (needUrl) setApiUrl('');
       const msg = err.code === 'UNKNOWN_ROUTE'
         ? 'Apps Script 에 로그인 기능(Auth.gs)이 아직 반영되지 않았습니다. 최신 코드를 붙여넣고 재배포해 주세요.'
         : err.message || '로그인 실패';
-      setError(msg);
+      // 어떤 Apps Script 코드가 응답하는지 확인용 (배포 버전 표시)
+      let ver = '';
+      try { const r = await apiClient.ping(); ver = r.version || '버전 정보 없음 (구버전 코드)'; }
+      catch (e2) { ver = '확인 실패: ' + e2.message; }
+      setError(msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: 2026-09-25-02)');
+      if (needUrl) setApiUrl('');
     } finally {
       setBusy(false);
     }

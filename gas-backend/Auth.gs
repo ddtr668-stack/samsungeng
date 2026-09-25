@@ -41,6 +41,17 @@ function SG_setAdminPassword() {
   Logger.log('관리자 비밀번호가 설정되었습니다. 아이디: ' + SG_getAdminId_() + ' (NEW_PASSWORD 를 지우고 저장하세요)');
 }
 
+// 로그인이 안 될 때 편집기에서 실행해 확인 (PASSWORD 에 입력 → 실행 → 로그 확인 → 다시 지우기)
+function SG_checkLogin() {
+  var PASSWORD = '';
+  Logger.log('배포 코드 버전: ' + (typeof BUILD_VERSION_ !== 'undefined' ? BUILD_VERSION_ : '(DashboardApi.gs 없음)'));
+  Logger.log('관리자 아이디: ' + SG_getAdminId_());
+  Logger.log('비밀번호 설정됨: ' + SG_isAuthConfigured_());
+  if (PASSWORD) Logger.log('입력한 비밀번호 일치: ' + SG_checkPassword_(PASSWORD));
+  CacheService.getScriptCache().remove('SG_LOGIN_FAILS');
+  Logger.log('로그인 실패 잠금 해제됨');
+}
+
 function SG_getAdminId_() {
   return PropertiesService.getScriptProperties().getProperty(SG_AUTH_ID_KEY_) || 'admin';
 }
