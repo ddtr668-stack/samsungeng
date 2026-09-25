@@ -15,6 +15,12 @@ const App = () => {
   const [error, setError] = useState(null);
   const [needLogin, setNeedLogin] = useState(false);
   const [loginNotice, setLoginNotice] = useState('');
+  // 담당자별 보기 (사이드바에서 선택 · 모든 목록 화면에 공통 적용)
+  const [viewManager, setViewManagerState] = useState(() => { try { return localStorage.getItem('hb.viewManager') || 'all'; } catch { return 'all'; } });
+  const setViewManager = useCallback((v) => {
+    setViewManagerState(v || 'all');
+    try { localStorage.setItem('hb.viewManager', v || 'all'); } catch {}
+  }, []);
   const [idleLeft, setIdleLeft] = useState(null);   // 자동 로그아웃까지 남은 초 (경고 표시용)
   const [route, setRoute] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
@@ -151,10 +157,19 @@ const App = () => {
   );
   if (!data) return null;
 
+  const managerStats = (() => {
+    const m = {};
+    data.contracts.forEach(c => { if (c.manager) m[c.manager] = (m[c.manager] || 0) + 1; });
+    return Object.keys(m).sort().map(name => ({ name, count: m[name] }));
+  })();
+  const activeManager = viewManager !== 'all' && managerStats.some(x => x.name === viewManager) ? viewManager : 'all';
+  // 선택한 담당자의 계약만으로 다시 계산한 데이터 (계약 상세·설정·모달은 전체 데이터 사용)
+  const viewData = buildDashboardView(data, activeManager, null);
+
   const counts = {
-    total: data.contracts.length,
-    receivable: data.contracts.filter(c => c.balance > 0).length,
-    clients: data.clientStats.length,
+    total: viewData.contracts.length,
+    receivable: viewData.contracts.filter(c => c.balance > 0).length,
+    clients: viewData.clientStats.length,
   };
 
   const crumbTitles = {
@@ -184,7 +199,8 @@ const App = () => {
         </div>
       )}
       <div className="app">
-        <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}/>
+        <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}
+          managers={managerStats} activeManager={activeManager} onPickManager={setViewManager}/>
         <main>
           <Topbar
             crumbs={crumbs}
@@ -193,13 +209,15 @@ const App = () => {
             onAddContract={() => setNewContractOpen(true)}
             source={data._source}
             onRefresh={refresh}
+            viewManager={route.screen === 'detail' || route.screen === 'settings' ? 'all' : activeManager}
+            onClearManager={() => setViewManager('all')}
           />
 
           {route.screen === 'dashboard' && (
-            <ScreenDashboard key={uiTick} data={data} onNav={nav} onSelectContract={selectContract}/>
+            <ScreenDashboard key={uiTick} data={data} onNav={nav} onSelectContract={selectContract} viewManager={activeManager} onManagerChange={setViewManager}/>
           )}
           {route.screen === 'contracts' && (
-            <ScreenContracts data={data} onSelectContract={selectContract} initialSearch={globalSearch} onOpenNew={() => setNewContractOpen(true)}/>
+            <ScreenContracts data={viewData} onSelectContract={selectContract} initialSearch={globalSearch} onOpenNew={() => setNewContractOpen(true)}/>
           )}
           {route.screen === 'detail' && (
             <ScreenDetail
@@ -212,16 +230,16 @@ const App = () => {
             />
           )}
           {route.screen === 'receivable' && (
-            <ScreenReceivable data={data} onSelectContract={selectContract}/>
+            <ScreenReceivable data={viewData} onSelectContract={selectContract}/>
           )}
           {route.screen === 'clients' && (
-            <ScreenClients data={data} onSelectContract={selectContract} onUpdated={refresh}/>
+            <ScreenClients data={viewData} onSelectContract={selectContract} onUpdated={refresh}/>
           )}
           {route.screen === 'expense' && (
-            <ScreenExpense data={data} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
+            <ScreenExpense data={viewData} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
           )}
           {route.screen === 'reports' && (
-            <ScreenReports data={data}/>
+            <ScreenReports data={data} viewManager={activeManager} onManagerChange={setViewManager}/>
           )}
           {route.screen === 'settings' && (
             <ScreenSettings data={data} onRefresh={refresh} onApiUpdated={() => { bumpUi(); refresh(); }}/>
