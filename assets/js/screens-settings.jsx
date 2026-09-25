@@ -6,7 +6,111 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
   const [url, setUrl] = useState(getApiUrl());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  // Google Drive API 인증 정보
+  const [driveApiKey, setDriveApiKey] = useState(getGDriveApiKey());
+  const [driveClientId, setDriveClientId] = useState(getGDriveClientId());
+  const [driveSaved, setDriveSaved] = useState(false);
+  // 스프레드시트 링크 · 이름 (사이드바에 표시)
+  const [sheetUrl, setSheetUrlState] = useState(getSheetUrl());
+  const [sheetName, setSheetNameState] = useState(getSheetName());
+  const [sheetSaved, setSheetSaved] = useState(false);
   const toast = useToast();
+
+  // ─── 자동 백업(30일 보관) ───
+  const [backupTargets, setBackupTargets] = useState([]);      // [{key,label}]
+  const [backupSheets, setBackupSheets] = useState({});         // {key: true/false}
+  const [retentionDays, setRetentionDays] = useState(30);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupSaving, setBackupSaving] = useState(false);
+  const [runningBackup, setRunningBackup] = useState(false);
+  const [backups, setBackups] = useState([]);
+  const [restoringId, setRestoringId] = useState(null);
+
+  const loadBackupInfo = async () => {
+    if (!hasApiUrl()) return;
+    setBackupLoading(true);
+    try {
+      const [s, l] = await Promise.all([apiClient.getBackupSettings(), apiClient.listBackups()]);
+      setBackupTargets(s.targets || []);
+      setBackupSheets(s.settings?.sheets || {});
+      setRetentionDays(s.settings?.retentionDays || 30);
+      setBackups(l.backups || []);
+    } catch (e) {
+      toast?.('백업 정보를 불러오지 못했습니다: ' + e.message, 'error');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  useEffect(() => { loadBackupInfo(); /* eslint-disable-next-line */ }, []);
+
+  const toggleBackupSheet = (key) => setBackupSheets(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const saveBackupSettings = async () => {
+    setBackupSaving(true);
+    try {
+      const r = await apiClient.saveBackupSettings({ sheets: backupSheets, retentionDays: Number(retentionDays) || 30 });
+      if (r.triggerWarning) toast?.(r.triggerWarning, 'default');
+      else toast?.('백업 설정을 저장했습니다. 매일 새벽 3시에 자동 백업됩니다.', 'success');
+    } catch (e) {
+      toast?.('백업 설정 저장 실패: ' + e.message, 'error');
+    } finally {
+      setBackupSaving(false);
+    }
+  };
+
+  const runBackupNow = async () => {
+    setRunningBackup(true);
+    try {
+      const r = await apiClient.runBackupNow();
+      toast?.(`백업 완료 (${r.created?.length || 0}건 저장됨)`, 'success');
+      const l = await apiClient.listBackups();
+      setBackups(l.backups || []);
+    } catch (e) {
+      toast?.('백업 실행 실패: ' + e.message, 'error');
+    } finally {
+      setRunningBackup(false);
+    }
+  };
+
+  const restoreBackup = async (b) => {
+    if (!window.confirm(`"${b.label}" 을(를) ${b.date} 백업 시점으로 되돌립니다.\n현재 데이터는 되돌리기 전 별도로 안전 백업된 뒤 덮어써집니다. 계속할까요?`)) return;
+    setRestoringId(b.id);
+    try {
+      await apiClient.restoreBackup({ fileId: b.id });
+      toast?.('복원이 완료되었습니다. 데이터를 다시 불러옵니다.', 'success');
+      await onRefresh?.();
+    } catch (e) {
+      toast?.('복원 실패: ' + e.message, 'error');
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const saveSheet = () => {
+    setSheetUrl(sheetUrl);
+    setSheetName(sheetName);
+    setSheetSaved(true);
+    toast?.('스프레드시트 정보가 저장되었습니다', 'success');
+    setTimeout(() => setSheetSaved(false), 2000);
+    // 사이드바 즉시 반영을 위한 리렌더 (부모 트리거 재활용)
+    onApiUpdated?.();
+  };
+
+  const saveDriveCreds = () => {
+    setGDriveApiKey(driveApiKey);
+    setGDriveClientId(driveClientId);
+    setDriveSaved(true);
+    toast?.('Google Drive 인증 정보가 저장되었습니다', 'success');
+    setTimeout(() => setDriveSaved(false), 2000);
+  };
+  const clearDriveCreds = () => {
+    setGDriveApiKey('');
+    setGDriveClientId('');
+    setDriveApiKey('');
+    setDriveClientId('');
+    toast?.('Google Drive 인증 정보가 삭제되었습니다', 'success');
+  };
 
   const source = data?._source;
   const fetchedAt = data?._fetchedAt || data?._cacheTs;
@@ -25,7 +129,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
     setTestResult(null);
     try {
       const r = await apiClient.ping();
-      setTestResult({ ok: true, message: `연결 성공! (${r.ts || 'ok'})` });
+      setTestResult({ ok: true, message: `연결 성공! · Apps Script 배포 버전: ${r.version || '(버전 정보 없음 · 구버전 배포일 수 있음)'}` });
       toast?.('연결 성공', 'success');
     } catch (e) {
       setTestResult({ ok: false, message: e.message });
@@ -108,15 +212,62 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
           )}
 
           <div style={{marginTop:24,paddingTop:20,borderTop:'1px solid var(--line)'}}>
-            <div style={{fontSize:12.5,fontWeight:700,color:'var(--ink-2)',marginBottom:8}}>연결된 스프레드시트</div>
-            <a
-              href="https://docs.google.com/spreadsheets/d/1rUq7yu0pHrp-rln4JjGIslIib_d033ZuzwLD6odtORs/edit"
-              target="_blank" rel="noreferrer"
-              style={{display:'inline-flex',alignItems:'center',gap:8,padding:'10px 14px',borderRadius:9,background:'var(--green-50)',color:'var(--green-800)',textDecoration:'none',fontSize:12.5,fontWeight:600,border:'1px solid #D3DCD3'}}>
-              <span style={{width:18,height:18,borderRadius:4,background:'#217346',display:'inline-flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:10,fontWeight:800}}>X</span>
-              계약관리_v1.3 · Google Sheets
-              <Icon name="external" size={12}/>
-            </a>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+              <div style={{fontSize:12.5,fontWeight:700,color:'var(--ink-2)'}}>연결된 스프레드시트</div>
+              {sheetUrl && (
+                <a
+                  href={sheetUrl} target="_blank" rel="noreferrer"
+                  style={{display:'inline-flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:6,background:'var(--green-50)',color:'var(--green-800)',textDecoration:'none',fontSize:11,fontWeight:600,border:'1px solid #D3DCD3'}}>
+                  <span style={{width:14,height:14,borderRadius:3,background:'#217346',display:'inline-flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:8,fontWeight:800}}>X</span>
+                  현재 링크 열기
+                  <Icon name="external" size={10}/>
+                </a>
+              )}
+            </div>
+
+            <div className="form-field full" style={{marginTop:0}}>
+              <label>시트 표시 이름</label>
+              <input
+                type="text"
+                value={sheetName}
+                onChange={e => setSheetNameState(e.target.value)}
+                placeholder="예: 계약관리_v1.3"
+                style={{fontSize:12.5}}
+              />
+              <div className="hint">사이드바와 대시보드 헤더에 표시되는 이름입니다.</div>
+            </div>
+
+            <div className="form-field full" style={{marginTop:12}}>
+              <label>시트 URL</label>
+              <input
+                type="url"
+                value={sheetUrl}
+                onChange={e => setSheetUrlState(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
+              />
+              <div className="hint">사이드바의 "데이터 소스" 링크가 이 주소로 연결됩니다.</div>
+            </div>
+
+            <div className="hstack" style={{marginTop:12}}>
+              <button
+                className={'btn-primary' + (sheetSaved ? ' saved' : '')}
+                onClick={saveSheet}
+                disabled={!sheetUrl.trim() || !sheetName.trim()}
+                style={sheetSaved ? {background:'var(--pos)'} : undefined}>
+                <Icon name="check" size={14} stroke={2.4}/>
+                {sheetSaved ? '저장됨' : '스프레드시트 정보 저장'}
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setSheetUrlState('https://docs.google.com/spreadsheets/d/1rUq7yu0pHrp-rln4JjGIslIib_d033ZuzwLD6odtORs/edit');
+                  setSheetNameState('계약관리_v1.3');
+                }}
+                title="입력창을 기본값으로 되돌립니다 (저장 전)">
+                기본값
+              </button>
+            </div>
           </div>
         </div>
 
@@ -140,6 +291,151 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
         </div>
       </div>
 
+      {/* Google Drive Picker 인증 정보 (지출품의서 엑셀 가져오기용) */}
+      <div className="card pad-lg">
+        <CardHead
+          title="Google Drive Picker · 엑셀 파일 가져오기"
+          sub="지출품의서 작성 시 Drive에서 설치비/제품내역서 엑셀을 선택하려면 필요합니다 (선택 사항)"
+        />
+
+        <div style={{padding:'12px 14px',background:hasDriveCredentials()?'var(--pos-soft)':'var(--bronze-50)',border:'1px solid '+(hasDriveCredentials()?'#C7E5D0':'#ECD9AE'),borderRadius:10,marginBottom:16,fontSize:12.5}}>
+          <b style={{color:hasDriveCredentials()?'var(--pos)':'var(--bronze-800)'}}>
+            {hasDriveCredentials() ? '✓ 활성화됨' : '⚠ 미설정'}
+          </b>
+          <span style={{color:'var(--ink-3)',marginLeft:8}}>
+            {hasDriveCredentials()
+              ? '지출품의서 모달에서 "Drive에서 가져오기" 버튼이 활성화됩니다.'
+              : '미설정 상태에서도 "PC 파일" 버튼으로 로컬 엑셀은 가져올 수 있습니다.'}
+          </span>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <div className="form-field">
+            <label>API Key</label>
+            <input
+              type="text"
+              value={driveApiKey}
+              onChange={e => setDriveApiKey(e.target.value)}
+              placeholder="AIza..."
+              style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
+            />
+            <div className="hint">Google Cloud Console → API 및 서비스 → 사용자 인증 정보 → API 키</div>
+          </div>
+          <div className="form-field">
+            <label>OAuth 2.0 Client ID</label>
+            <input
+              type="text"
+              value={driveClientId}
+              onChange={e => setDriveClientId(e.target.value)}
+              placeholder="123...-abc.apps.googleusercontent.com"
+              style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
+            />
+            <div className="hint">사용자 인증 정보 → OAuth 2.0 클라이언트 ID (웹 애플리케이션)</div>
+          </div>
+        </div>
+
+        <div className="hstack" style={{marginTop:16}}>
+          <button className="btn-primary" onClick={saveDriveCreds} disabled={!driveApiKey.trim() || !driveClientId.trim()}>
+            <Icon name="check" size={14} stroke={2.4}/>
+            {driveSaved ? '저장됨 ✓' : '저장'}
+          </button>
+          {hasDriveCredentials() && (
+            <button className="btn-ghost" onClick={clearDriveCreds}>
+              <Icon name="xCircle" size={14}/>
+              삭제
+            </button>
+          )}
+        </div>
+
+        <div style={{marginTop:20,padding:'14px 16px',background:'var(--surface-2)',borderRadius:10,fontSize:12,color:'var(--ink-3)',lineHeight:1.7}}>
+          <b style={{color:'var(--ink-2)'}}>🔐 준비 방법 (최초 1회, 약 15분)</b>
+          <ol style={{margin:'8px 0 0',paddingLeft:20}}>
+            <li>Google Cloud Console → 기존 Apps Script 프로젝트 선택</li>
+            <li><b>API 및 서비스 → 라이브러리</b>에서 <b>"Google Picker API"</b>, <b>"Google Drive API"</b> 검색 → <b>사용 설정</b></li>
+            <li><b>사용자 인증 정보 → 사용자 인증 정보 만들기 → API 키</b> → 생성된 키 복사</li>
+            <li><b>사용자 인증 정보 만들기 → OAuth 클라이언트 ID → 웹 애플리케이션</b>
+              <ul style={{margin:'4px 0',paddingLeft:18}}>
+                <li>승인된 JavaScript 원본: <code style={{background:'#fff',padding:'1px 4px',borderRadius:3,fontSize:11}}>http://localhost:3000</code></li>
+                <li>승인된 리디렉션 URI: (비워둠)</li>
+              </ul>
+            </li>
+            <li>생성된 클라이언트 ID 복사 → 위 입력창에 붙여넣기 → 저장</li>
+          </ol>
+          <div style={{marginTop:10}}>상세 스크린샷 가이드는 별도 배포된 <b>"Drive Picker 설정 가이드"</b> 문서 참조.</div>
+        </div>
+      </div>
+
+      {/* 자동 백업(30일 보관) */}
+      <div className="card pad-lg">
+        <CardHead
+          title="자동 백업 · 30일 보관"
+          sub="선택한 시트를 매일 새벽 3시에 Google Drive에 스냅샷으로 저장하고, 필요하면 원하는 시점으로 되돌릴 수 있습니다"
+        />
+
+        {!hasApiUrl() ? (
+          <div style={{padding:'12px 14px',background:'var(--bronze-50)',border:'1px solid #ECD9AE',borderRadius:10,fontSize:12.5,color:'var(--bronze-800)'}}>
+            API URL을 먼저 연결해야 백업 설정을 사용할 수 있습니다.
+          </div>
+        ) : (
+          <>
+            <div style={{fontSize:12.5,fontWeight:700,color:'var(--ink-2)',marginBottom:10}}>백업할 항목 선택</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px 16px',marginBottom:16}}>
+              {backupTargets.map(t => (
+                <label key={t.key} style={{display:'flex',alignItems:'center',gap:8,fontSize:12.5,color:'var(--ink-2)',cursor:'pointer',padding:'6px 0'}}>
+                  <input type="checkbox" checked={!!backupSheets[t.key]} onChange={() => toggleBackupSheet(t.key)} style={{width:15,height:15}}/>
+                  {t.label}
+                </label>
+              ))}
+              {backupLoading && backupTargets.length === 0 && <div style={{fontSize:12,color:'var(--ink-3)'}}>불러오는 중…</div>}
+            </div>
+
+            <div className="form-field" style={{maxWidth:200,marginBottom:16}}>
+              <label>보관 기간(일)</label>
+              <input type="number" min={1} max={365} value={retentionDays} onChange={e => setRetentionDays(e.target.value)} style={{fontSize:12.5}}/>
+              <div className="hint">이 기간이 지난 백업은 자동으로 삭제됩니다. 기본 30일.</div>
+            </div>
+
+            <div className="hstack">
+              <button className="btn-primary" onClick={saveBackupSettings} disabled={backupSaving}>
+                <Icon name="check" size={14} stroke={2.4}/>
+                {backupSaving ? '저장 중…' : '백업 설정 저장'}
+              </button>
+              <button className={'btn-ghost' + (runningBackup ? ' loading' : '')} onClick={runBackupNow} disabled={runningBackup}>
+                <Icon name="download" size={14} stroke={2}/>
+                {runningBackup ? '백업 중…' : '지금 백업 실행'}
+              </button>
+            </div>
+
+            <div style={{marginTop:22,paddingTop:18,borderTop:'1px solid var(--line)'}}>
+              <div style={{fontSize:12.5,fontWeight:700,color:'var(--ink-2)',marginBottom:10}}>최근 백업 목록</div>
+              {backupLoading ? (
+                <div style={{fontSize:12,color:'var(--ink-3)'}}>불러오는 중…</div>
+              ) : backups.length === 0 ? (
+                <div style={{fontSize:12,color:'var(--ink-3)'}}>아직 백업이 없습니다. "지금 백업 실행"을 눌러 첫 백업을 만들어보세요.</div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:280,overflowY:'auto'}}>
+                  {backups.map(b => (
+                    <div key={b.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,padding:'8px 12px',background:'var(--surface-2)',borderRadius:8,fontSize:12}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:600,color:'var(--ink-1)'}}>{b.label}</div>
+                        <div style={{color:'var(--ink-3)',fontSize:11,marginTop:2}}>{b.date}</div>
+                      </div>
+                      <button
+                        className="btn-ghost"
+                        style={{flexShrink:0,padding:'5px 12px',fontSize:11.5}}
+                        disabled={restoringId === b.id}
+                        onClick={() => restoreBackup(b)}>
+                        {restoringId === b.id ? '복원 중…' : '이 시점으로 복원'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="card">
         <CardHead title="캐시 및 데이터 관리"/>
         <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
@@ -150,6 +446,10 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
           <button className="btn-ghost" onClick={() => window.open('https://script.google.com/home', '_blank')}>
             <Icon name="external" size={14}/>
             Apps Script 편집기 열기
+          </button>
+          <button className="btn-ghost" onClick={() => window.open('https://console.cloud.google.com/apis/credentials', '_blank')}>
+            <Icon name="external" size={14}/>
+            Google Cloud Console 열기
           </button>
         </div>
         <div style={{marginTop:14,fontSize:12,color:'var(--ink-3)',lineHeight:1.6}}>

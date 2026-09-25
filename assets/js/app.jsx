@@ -13,6 +13,9 @@ const App = () => {
   const [globalSearch, setGlobalSearch] = useState('');
   const [newContractOpen, setNewContractOpen] = useState(false);
   const [expenseContract, setExpenseContract] = useState(null);
+  // 설정 변경 시 사이드바 등 리렌더용 카운터
+  const [uiTick, setUiTick] = useState(0);
+  const bumpUi = useCallback(() => setUiTick(t => t + 1), []);
 
   // Persist route
   useEffect(() => {
@@ -102,7 +105,7 @@ const App = () => {
   return (
     <ToastProvider>
       <div className="app">
-        <Sidebar current={sideCurrent} onNav={nav} counts={counts}/>
+        <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts}/>
         <main>
           <Topbar
             crumbs={crumbs}
@@ -114,7 +117,7 @@ const App = () => {
           />
 
           {route.screen === 'dashboard' && (
-            <ScreenDashboard data={data} onNav={nav} onSelectContract={selectContract}/>
+            <ScreenDashboard key={uiTick} data={data} onNav={nav} onSelectContract={selectContract}/>
           )}
           {route.screen === 'contracts' && (
             <ScreenContracts data={data} onSelectContract={selectContract} initialSearch={globalSearch} onOpenNew={() => setNewContractOpen(true)}/>
@@ -132,7 +135,7 @@ const App = () => {
             <ScreenReceivable data={data} onSelectContract={selectContract}/>
           )}
           {route.screen === 'clients' && (
-            <ScreenClients data={data} onSelectContract={selectContract}/>
+            <ScreenClients data={data} onSelectContract={selectContract} onUpdated={refresh}/>
           )}
           {route.screen === 'expense' && (
             <ScreenExpense data={data} onSelectContract={selectContract}/>
@@ -141,7 +144,7 @@ const App = () => {
             <ScreenReports data={data}/>
           )}
           {route.screen === 'settings' && (
-            <ScreenSettings data={data} onRefresh={refresh} onApiUpdated={refresh}/>
+            <ScreenSettings data={data} onRefresh={refresh} onApiUpdated={() => { bumpUi(); refresh(); }}/>
           )}
         </main>
       </div>
@@ -153,12 +156,17 @@ const App = () => {
         data={data}
       />
 
-      <ExpenseModal
-        open={!!expenseContract}
-        contract={expenseContract}
-        onClose={() => setExpenseContract(null)}
-        data={data}
-      />
+      {/* 조건부 마운트: contract 이 세팅될 때만 렌더 (hooks 순서 안정성 확보) */}
+      {expenseContract && (
+        <ExpenseModal
+          key={expenseContract.id ?? expenseContract.no}
+          open={true}
+          contract={expenseContract}
+          onClose={() => setExpenseContract(null)}
+          data={data}
+          onSaved={refresh}
+        />
+      )}
     </ToastProvider>
   );
 };

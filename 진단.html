@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<title>Drive 연동 · 자가 진단</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+  body { margin:0; padding:40px 20px; font-family:'Pretendard Variable', -apple-system, sans-serif;
+         background:#FBFBF8; color:#1F2A24; line-height:1.6; }
+  .wrap { max-width:820px; margin:0 auto; }
+  h1 { font-size:24px; margin:0 0 8px; letter-spacing:-0.02em; }
+  .sub { color:#6E7369; margin-bottom:28px; font-size:14px; }
+  .check {
+    display:grid; grid-template-columns:32px 1fr auto; gap:12px; align-items:center;
+    padding:14px 16px; margin-bottom:8px;
+    background:#fff; border:1px solid #E4E6E1; border-radius:10px;
+    font-size:13px;
+  }
+  .check.ok { border-color:#C9DFD1; background:#F4FBF6; }
+  .check.err { border-color:#F0BFB4; background:#FCF2EE; }
+  .check.warn { border-color:#ECD9AE; background:#FBF6E9; }
+  .badge {
+    width:28px; height:28px; border-radius:50%; display:inline-flex;
+    align-items:center; justify-content:center; font-size:15px; font-weight:800; color:#fff;
+  }
+  .badge.ok { background:#22A96A; }
+  .badge.err { background:#B0402C; }
+  .badge.warn { background:#D97706; }
+  .badge.wait { background:#9AA096; }
+  .label { font-weight:700; }
+  .val {
+    font-family:ui-monospace,Menlo,monospace; font-size:11.5px; color:#3A4A42;
+    background:#F3F3EE; padding:2px 8px; border-radius:4px;
+    max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    display:inline-block;
+  }
+  .hint { font-size:11.5px; color:#8f6d3a; margin-top:4px; grid-column:2/-1; }
+  section { margin-bottom:32px; }
+  h2 { font-size:15px; letter-spacing:-0.01em; margin:0 0 12px; }
+  button { padding:10px 18px; font-size:13px; font-weight:700;
+           background:#22A96A; color:#fff; border:0; border-radius:7px; cursor:pointer; }
+  button.secondary { background:#fff; color:#3A4A42; border:1px solid #D3D6D0; }
+  .actions { display:flex; gap:8px; margin-top:16px; }
+  .console-hint {
+    padding:14px 16px; background:#EEF4F8; border:1px solid #C8DBE5;
+    border-radius:8px; font-size:12.5px; color:#1a5490; line-height:1.7;
+  }
+  code { background:#F3F3EE; padding:1px 5px; border-radius:3px; font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔍 Drive 연동 · 자가 진단</h1>
+  <div class="sub">패치 파일이 제대로 적용되었는지, 자격 증명이 올바른지 자동 확인합니다.</div>
+
+  <section>
+    <h2>1. 파일 · 스크립트</h2>
+    <div id="fileChecks"></div>
+  </section>
+
+  <section>
+    <h2>2. 자격 증명</h2>
+    <div id="credChecks"></div>
+  </section>
+
+  <section>
+    <h2>3. 실제 API 호출 테스트</h2>
+    <div id="apiChecks">
+      <div class="check">
+        <span class="badge wait">?</span>
+        <div><b>Drive API 연결 테스트</b><div class="hint">아래 버튼을 눌러 실제로 Drive에 연결해봅니다.</div></div>
+        <span></span>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnTest">🚀 실제 연결 테스트</button>
+      <button class="secondary" id="btnReset">토큰 초기화</button>
+    </div>
+  </section>
+
+  <section id="resultSection" style="display:none;">
+    <h2>결과</h2>
+    <div id="resultBox" style="padding:14px 16px;border-radius:8px;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.7;"></div>
+  </section>
+
+  <section>
+    <div class="console-hint">
+      💡 브라우저 <b>개발자 도구(F12)</b> → <b>Console 탭</b> 을 열어두고 테스트를 실행하면
+      원본 에러 객체를 펼쳐서 볼 수 있습니다. 특히 <code>[OAuth] Token request failed</code> 로그의
+      <code>▶ Object</code> 를 클릭해 펼치면 <code>error</code>, <code>error_description</code> 필드가 있습니다.
+    </div>
+  </section>
+</div>
+
+<script src="assets/js/lib-drive-picker.jsx" type="application/javascript" onerror="this.remove()"></script>
+<script>
+// 스크립트를 실제로 동기 로드해서 패치 버전 여부 확인
+function checkPatchApplied() {
+  return new Promise((resolve) => {
+    fetch('assets/js/lib-drive-picker.jsx?_=' + Date.now())
+      .then(r => r.text())
+      .then(txt => {
+        const hasSetToken = /gapi\.client\.setToken|_applyTokenToGapi/.test(txt);
+        const hasHumanMsg = /popup_closed_by_user|invalid_client|access_denied/.test(txt);
+        resolve({
+          fileFound: true,
+          v2Applied: hasSetToken,           // 400 에러 수정
+          v3Applied: hasHumanMsg,           // OAuth 에러 파싱
+          size: txt.length,
+        });
+      })
+      .catch(e => resolve({ fileFound: false, error: e.message }));
+  });
+}
+
+function checkOtherFile(path, pattern) {
+  return fetch(path + '?_=' + Date.now()).then(r => r.text()).then(txt => ({
+    fileFound: true,
+    match: pattern.test(txt),
+    size: txt.length,
+  })).catch(() => ({ fileFound: false }));
+}
+
+function renderCheck(el, status, label, detail, hint) {
+  const div = document.createElement('div');
+  div.className = 'check ' + status;
+  const badgeText = status === 'ok' ? '✓' : status === 'err' ? '✕' : status === 'warn' ? '!' : '?';
+  div.innerHTML = `
+    <span class="badge ${status}">${badgeText}</span>
+    <div><span class="label">${label}</span>${detail ? ' · <span class="val">'+detail+'</span>' : ''}</div>
+    <span></span>
+    ${hint ? '<div class="hint">' + hint + '</div>' : ''}
+  `;
+  el.appendChild(div);
+}
+
+async function runChecks() {
+  const fileEl = document.getElementById('fileChecks');
+  const credEl = document.getElementById('credChecks');
+  fileEl.innerHTML = ''; credEl.innerHTML = '';
+
+  // 파일 검사
+  const picker = await checkPatchApplied();
+  if (!picker.fileFound) {
+    renderCheck(fileEl, 'err', 'lib-drive-picker.jsx 없음', null,
+      '설치 폴더의 assets/js/ 안에 파일이 있는지 확인하세요.');
+    return;
+  }
+  renderCheck(fileEl, 'ok', 'lib-drive-picker.jsx 존재', `${picker.size} bytes`);
+  renderCheck(fileEl,
+    picker.v2Applied ? 'ok' : 'err',
+    'v2 패치 (400 에러 수정)',
+    picker.v2Applied ? '적용됨' : '미적용',
+    picker.v2Applied ? null : '패치 파일로 덮어쓰지 않았습니다. 파일을 교체하고 Ctrl+F5 로 강제 새로고침하세요.');
+  renderCheck(fileEl,
+    picker.v3Applied ? 'ok' : 'err',
+    'v3 패치 (OAuth 에러 메시지 파싱)',
+    picker.v3Applied ? '적용됨' : '미적용',
+    picker.v3Applied ? null : '패치 v3 파일로 덮어쓰지 않았습니다.');
+
+  const folders = await checkOtherFile('assets/js/components-site-folders.jsx', /extractDriveError/);
+  renderCheck(fileEl,
+    folders.match ? 'ok' : 'warn',
+    'components-site-folders.jsx',
+    folders.fileFound ? (folders.match ? '패치됨' : '옛 버전') : '없음',
+    folders.match ? null : '에러 메시지가 [object Object]로 나오는 것은 이 파일이 옛 버전이라서일 수 있습니다.');
+
+  const libFolders = await checkOtherFile('assets/js/lib-drive-folders.jsx', /ensureDriveClient/);
+  renderCheck(fileEl,
+    libFolders.match ? 'ok' : 'warn',
+    'lib-drive-folders.jsx',
+    libFolders.fileFound ? (libFolders.match ? '패치됨' : '옛 버전') : '없음');
+
+  // 자격 증명 검사
+  const apiKey = (localStorage.getItem('hb.gdrive.apiKey') || '').trim();
+  const clientId = (localStorage.getItem('hb.gdrive.clientId') || '').trim();
+
+  renderCheck(credEl,
+    apiKey ? 'ok' : 'err',
+    'API Key',
+    apiKey ? apiKey.slice(0,10) + '...' + apiKey.slice(-4) : '미등록',
+    apiKey ? (apiKey.startsWith('AIza') ? null : '⚠️ 형식이 이상합니다. 보통 AIza 로 시작하는 39자 문자열입니다.')
+           : '설정 화면에서 API Key를 등록하세요.');
+  renderCheck(credEl,
+    clientId ? 'ok' : 'err',
+    'OAuth Client ID',
+    clientId ? clientId.slice(0,15) + '...' + clientId.slice(-25) : '미등록',
+    clientId ? (clientId.endsWith('.apps.googleusercontent.com') ? null
+               : '⚠️ 형식이 이상합니다. 보통 .apps.googleusercontent.com 으로 끝납니다.')
+             : '설정 화면에서 Client ID를 등록하세요.');
+
+  renderCheck(credEl, 'ok', '현재 접속 origin',
+    window.location.origin,
+    'Cloud Console → OAuth Client ID → "승인된 JavaScript 원본" 에 이 주소가 정확히 등록되어야 합니다.');
+}
+
+async function runApiTest() {
+  const resultSection = document.getElementById('resultSection');
+  const resultBox = document.getElementById('resultBox');
+  resultSection.style.display = 'block';
+  resultBox.style.background = '#F3F3EE';
+  resultBox.style.color = '#3A4A42';
+  resultBox.textContent = '⏳ 테스트 중... (Google 로그인 팝업이 뜰 수 있습니다)';
+
+  try {
+    if (!window.hasDriveCredentials || !window.hasDriveCredentials()) {
+      throw new Error('자격 증명이 설정되지 않았습니다. 위 "2. 자격 증명" 섹션을 확인하세요.');
+    }
+    if (!window.loadGoogleApis || !window.requestAccessToken) {
+      throw new Error('패치가 적용되지 않았습니다. 페이지를 강제 새로고침(Ctrl+F5)한 뒤 다시 시도하세요.');
+    }
+
+    resultBox.textContent = '⏳ Google API 스크립트 로드 중...';
+    await window.loadGoogleApis();
+
+    resultBox.textContent = '⏳ OAuth 토큰 요청 중... (팝업이 떴다면 승인해주세요)';
+    const token = await window.requestAccessToken();
+
+    resultBox.textContent = '⏳ Drive API 호출 중...';
+    const res = await window.gapi.client.drive.files.list({
+      q: `'1PYMHWwsNYjygoDP1KKKjpk2lMAXIvXk0' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+      pageSize: 5,
+    });
+
+    const files = res.result.files || [];
+    resultBox.style.background = '#F4FBF6';
+    resultBox.style.color = '#22503A';
+    resultBox.textContent = '✅ 성공!\n\n' +
+      `토큰: ${token.slice(0,20)}...\n` +
+      `루트 폴더 하위 폴더 ${files.length}개 확인:\n` +
+      files.slice(0,5).map(f => '  · ' + f.name).join('\n') +
+      (files.length > 5 ? '\n  · ...' : '') +
+      '\n\n대시보드로 돌아가 계약 상세를 열면 LIVE 뱃지가 표시됩니다.';
+
+  } catch (e) {
+    console.error('[진단] 실패', e);
+    resultBox.style.background = '#FCF2EE';
+    resultBox.style.color = '#7A2A1E';
+
+    // 상세 에러 정보 수집
+    const details = {
+      message: e?.message,
+      name: e?.name,
+      result_error: e?.result?.error,
+      body: e?.body,
+      status: e?.status,
+      error: e?.error,
+      error_description: e?.error_description,
+    };
+    const clean = {};
+    Object.keys(details).forEach(k => { if (details[k] != null) clean[k] = details[k]; });
+
+    resultBox.textContent = '❌ 실패!\n\n' +
+      '메시지: ' + (e?.message || '(없음)') + '\n\n' +
+      '상세:\n' + JSON.stringify(clean, null, 2) + '\n\n' +
+      '💡 F12 → Console 탭에 원본 에러가 남아있습니다.';
+  }
+}
+
+function resetToken() {
+  // gapi 로드된 상태라면 토큰 클리어
+  try {
+    if (window.gapi?.client?.setToken) window.gapi.client.setToken(null);
+  } catch {}
+  // 페이지 리로드로 _accessToken 변수 초기화
+  location.reload();
+}
+
+document.getElementById('btnTest').addEventListener('click', runApiTest);
+document.getElementById('btnReset').addEventListener('click', resetToken);
+
+// 페이지 로드 시 자동 검사
+runChecks();
+</script>
+</body>
+</html>

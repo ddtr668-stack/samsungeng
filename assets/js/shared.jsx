@@ -81,6 +81,23 @@ const Icon = ({ name, size = 16, className = '', stroke = 1.7 }) => {
     print: <><path d="M6 9V2h12v7"/><rect x="4" y="9" width="16" height="9" rx="2"/><path d="M6 14h12v7H6z"/></>,
     more: <><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="6" r="1.5"/><circle cx="12" cy="18" r="1.5"/></>,
   };
+  // ─── React.createElement 로 직접 작성한 아이콘 (Babel Standalone 파싱 이슈 회피) ───
+  const rce = React.createElement;
+  paths.close = rce(React.Fragment, null,
+    rce('path', { d: 'M18 6 6 18M6 6l12 12' })
+  );
+  paths.x = paths.close;
+  paths.eye = rce(React.Fragment, null,
+    rce('path', { d: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z' }),
+    rce('circle', { cx: 12, cy: 12, r: 3 })
+  );
+  paths.folder = rce(React.Fragment, null,
+    rce('path', { d: 'M4 6a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6Z' })
+  );
+  paths.link = rce(React.Fragment, null,
+    rce('path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71' }),
+    rce('path', { d: 'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' })
+  );
   return <svg {...s}>{paths[name] || null}</svg>;
 };
 
@@ -128,10 +145,11 @@ const Sidebar = ({ current, onNav, counts }) => {
 
       <div className="nav-label">데이터 소스</div>
       <nav className="nav">
-        <a href="https://docs.google.com/spreadsheets/d/1rUq7yu0pHrp-rln4JjGIslIib_d033ZuzwLD6odtORs/edit"
-           target="_blank" rel="noreferrer">
+        <a href={typeof getSheetUrl === 'function' ? getSheetUrl() : '#'}
+           target="_blank" rel="noreferrer"
+           title={typeof getSheetUrl === 'function' ? getSheetUrl() : ''}>
           <span className="ico" style={{width:16,height:16,borderRadius:4,background:'#217346',display:'inline-flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:9,fontWeight:800}}>X</span>
-          계약관리_v1.3
+          {typeof getSheetName === 'function' ? getSheetName() : '데이터 시트'}
           <span style={{marginLeft:'auto',color:'#6E7369',opacity:.6}}><Icon name="external" size={11}/></span>
         </a>
       </nav>
@@ -159,6 +177,38 @@ const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefres
     catch (e) { /* toast handled elsewhere */ }
     finally { setRefreshing(false); }
   };
+
+  // ─── 변경 이력 (🔔) : 최근 10건 · 어떤 항목이 어떻게 바뀌었는지 표시 ───
+  const [logOpen, setLogOpen] = useState(false);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logItems, setLogItems] = useState(null);
+  const [logError, setLogError] = useState(null);
+  const logBoxRef = useRef(null);
+
+  const toggleLog = async () => {
+    const next = !logOpen;
+    setLogOpen(next);
+    if (next && window.hasApiUrl && window.hasApiUrl()) {
+      setLogLoading(true);
+      setLogError(null);
+      try {
+        const r = await window.apiClient.changeLog();
+        setLogItems(r.log || []);
+      } catch (e) {
+        setLogError(e.message || '변경 이력을 불러오지 못했습니다.');
+      } finally {
+        setLogLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!logOpen) return;
+    const onDocClick = (e) => { if (logBoxRef.current && !logBoxRef.current.contains(e.target)) setLogOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [logOpen]);
+
   return (
     <div className="topbar">
       <div className="crumbs">
@@ -193,10 +243,45 @@ const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefres
           </svg>
         </button>
       )}
-      <button className="icon-btn" aria-label="알림">
-        <Icon name="bell" size={16}/>
-        <span className="dot"></span>
-      </button>
+      <div style={{position:'relative'}} ref={logBoxRef}>
+        <button className="icon-btn" aria-label="변경 이력" onClick={toggleLog}>
+          <Icon name="bell" size={16}/>
+          <span className="dot"></span>
+        </button>
+        {logOpen && (
+          <div style={{
+            position:'absolute', top:'calc(100% + 8px)', right:0, width:360, maxHeight:440,
+            overflowY:'auto', background:'#fff', border:'1px solid var(--line)', borderRadius:12,
+            boxShadow:'0 14px 34px rgba(0,0,0,0.16)', zIndex:200, padding:'6px 0'
+          }}>
+            <div style={{padding:'8px 16px 10px', fontSize:12.5, fontWeight:700, color:'var(--ink-1)', borderBottom:'1px solid var(--line)'}}>
+              최근 변경 내역 · 최대 10건
+            </div>
+            {!(window.hasApiUrl && window.hasApiUrl()) && (
+              <div style={{padding:'16px', fontSize:12, color:'var(--ink-3)'}}>API URL이 설정되지 않았습니다. 설정 화면에서 먼저 연결해주세요.</div>
+            )}
+            {window.hasApiUrl && window.hasApiUrl() && logLoading && (
+              <div style={{padding:'16px', fontSize:12, color:'var(--ink-3)'}}>불러오는 중…</div>
+            )}
+            {window.hasApiUrl && window.hasApiUrl() && !logLoading && logError && (
+              <div style={{padding:'16px', fontSize:12, color:'var(--danger)'}}>{logError}</div>
+            )}
+            {window.hasApiUrl && window.hasApiUrl() && !logLoading && !logError && logItems && logItems.length === 0 && (
+              <div style={{padding:'16px', fontSize:12, color:'var(--ink-3)'}}>변경 이력이 없습니다.</div>
+            )}
+            {window.hasApiUrl && window.hasApiUrl() && !logLoading && !logError && logItems && logItems.map((it, i) => (
+              <div key={i} style={{padding:'10px 16px', borderBottom: i < logItems.length - 1 ? '1px solid var(--line)' : 'none'}}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8}}>
+                  <span style={{fontSize:10.5, fontWeight:700, color:'var(--green-800)', background:'var(--green-50)', padding:'2px 8px', borderRadius:999, whiteSpace:'nowrap'}}>{it.category}</span>
+                  <span style={{fontSize:10.5, color:'var(--ink-4)', whiteSpace:'nowrap'}}>{it.time}</span>
+                </div>
+                <div style={{fontSize:12.5, fontWeight:600, color:'var(--ink-1)', marginTop:4}}>{it.target}</div>
+                <div style={{fontSize:11.5, color:'var(--ink-3)', marginTop:2, lineHeight:1.5, wordBreak:'break-word'}}>{it.summary}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <button className="btn-primary" onClick={onAddContract}>
         <Icon name="plus" size={14} stroke={2.2}/>
         신규 계약

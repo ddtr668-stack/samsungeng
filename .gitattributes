@@ -1,0 +1,14 @@
+# 줄바꿈 규칙 (윈도우/맥 어디서 받아도 실행 스크립트가 깨지지 않게)
+* text=auto
+*.bat      text eol=crlf
+*.command  text eol=lf
+*.py       text eol=lf
+*.jsx      text eol=lf
+*.js       text eol=lf
+*.html     text eol=lf
+*.css      text eol=lf
+*.gs       text eol=lf
+*.json     text eol=lf
+*.md       text eol=lf
+*.xlsx     binary
+*.png      binary

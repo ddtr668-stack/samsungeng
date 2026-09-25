@@ -559,13 +559,15 @@ button.check:disabled{cursor:wait;opacity:.7}
   backdrop-filter:blur(2px);
 }
 .modal{
+  position:relative;
   background:var(--surface);border-radius:16px;
   box-shadow:0 24px 60px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.15);
   max-width:960px;width:100%;max-height:90vh;overflow:hidden;
   display:flex;flex-direction:column;
   animation:modalIn .18s ease-out;
+  will-change:transform;
 }
-@keyframes modalIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes modalIn{from{opacity:0}to{opacity:1}}
 .modal-head{
   padding:22px 26px 18px;border-bottom:1px solid var(--line);
   display:flex;align-items:flex-start;gap:12px;
@@ -641,6 +643,23 @@ button.check:disabled{cursor:wait;opacity:.7}
 .toast.error{background:var(--danger)}
 @keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
 
+/* ─── Google Drive Picker · 최상위 z-index 강제 ─── */
+/* 우리 모달 backdrop (z-index:100) · 드래그 중인 모달(transform 스태킹 컨텍스트) 보다
+   반드시 위에 뜨도록 최대 z-index 로 고정한다. JS(lib-drive-picker.jsx 의
+   watchPickerZIndex)에서도 동일하게 인라인 스타일로 강제하므로, 이 CSS 는
+   자바스크립트가 아직 못 잡은 첫 페인트 순간까지 커버하는 1차 방어선이다. */
+.picker-dialog, .picker-dialog-bg, .picker-dialog-content, .picker-dialog-buttons,
+.picker, .picker-frame, .picker-tooltip,
+[class*="picker-dialog"], [class*="picker-frame"] {
+  z-index: 2147483647 !important;
+}
+.picker-dialog-bg, [class*="picker-dialog-bg"] { z-index: 2147483646 !important; }
+/* Google Identity Services (OAuth) 로그인 팝업도 함께 올림 */
+#credential_picker_container, #credential_picker_iframe,
+.g_id_signin, .goog-modalpopup, [class*="qJTHM"] {
+  z-index: 2147483647 !important;
+}
+
 /* Refresh button */
 .refresh-btn{
   display:inline-flex;align-items:center;gap:6px;
@@ -668,4 +687,284 @@ button.check:disabled{cursor:wait;opacity:.7}
 .alert-bar .act{
   margin-left:auto;font-size:12.5px;color:var(--bronze-800);font-weight:600;
   cursor:pointer;background:none;border:0;text-decoration:underline;
+}
+
+
+/* ═══ 컴팩트 KPI (계약 상세 비용 카드) ═══ */
+.kpi-compact .kpi.tight,
+.kpi.kpi-mini {
+  padding: 12px 14px !important;
+  min-height: 0 !important;
+}
+.kpi.kpi-mini::before { display: none !important; }
+.kpi.kpi-mini .label { font-size: 11px !important; margin-bottom: 4px; }
+.kpi.kpi-mini .val { margin-top: 4px !important; font-size: 18px !important; }
+.kpi.kpi-mini .val .unit { font-size: 10px !important; margin-left: 1px !important; }
+
+/* 가로 진행 타임라인 */
+.timeline-h {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0;
+  position: relative;
+}
+.timeline-h::before {
+  content: '';
+  position: absolute;
+  top: 12px; left: 10%; right: 10%; height: 2px;
+  background: var(--line-2);
+  z-index: 0;
+}
+.tlh-item {
+  position: relative; z-index: 1;
+  padding: 0 8px;
+  text-align: center;
+}
+.tlh-dot {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--line-2);
+  margin: 4px auto 10px;
+  position: relative;
+}
+.tlh-item.done .tlh-dot {
+  background: var(--green-800);
+  border-color: var(--green-800);
+}
+.tlh-item.done .tlh-dot::after {
+  content: '';
+  position: absolute; left: 3px; top: 3px;
+  width: 8px; height: 8px;
+  background: #fff;
+  border-radius: 50%;
+}
+.tlh-item.now .tlh-dot {
+  background: #fff;
+  border-color: var(--green-800);
+  box-shadow: 0 0 0 4px rgba(31, 95, 74, 0.15);
+}
+.tlh-date {
+  font-size: 10.5px; color: var(--ink-3); font-weight: 600;
+  margin-bottom: 3px; letter-spacing: 0.02em;
+}
+.tlh-title {
+  font-size: 12px; font-weight: 700; color: var(--ink-1);
+  letter-spacing: -0.01em; margin-bottom: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tlh-item.done .tlh-title { color: var(--green-800); }
+.tlh-desc {
+  font-size: 10.5px; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 공사 진행률 카드 컴팩트 */
+.progress-compact .checks { gap: 6px !important; }
+.progress-compact .check { padding: 8px 6px !important; }
+.progress-compact .check .clabel { font-size: 11px !important; }
+.progress-compact .check .cbox { width: 22px !important; height: 22px !important; }
+.progress-compact .pbar { height: 6px !important; }
+
+/* ═══ 인쇄 스타일 ═══ */
+@page {
+  size: A4 landscape;
+  margin: 10mm 8mm;
+}
+@media print {
+  /* 배경/색상 유지 (Chrome/Edge) */
+  html, body {
+    background: white !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    font-size: 9pt !important;
+    -webkit-text-size-adjust: 100% !important;
+  }
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-shadow: none !important;
+  }
+
+  /* 완전 숨김 */
+  .no-print,
+  .sidebar,
+  aside,
+  .topbar,
+  .back-btn,
+  .refresh-btn,
+  .actions,
+  button {
+    display: none !important;
+  }
+
+  /* 앱 구조 재정의 — 사이드바 제거하고 전체 폭 활용 */
+  .app {
+    display: block !important;
+    grid-template-columns: none !important;
+    min-height: 0 !important;
+  }
+  main {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+    overflow: visible !important;
+  }
+
+  /* 헤더 */
+  .detail-head {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    border-bottom: 2px solid #000 !important;
+    padding: 0 0 6px 0 !important;
+    margin-bottom: 8px !important;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+  .detail-head h1 {
+    font-size: 16pt !important;
+    margin: 2px 0 4px !important;
+    line-height: 1.15 !important;
+    font-weight: 800 !important;
+  }
+  .detail-head .meta {
+    font-size: 8.5pt !important;
+    color: #444 !important;
+    gap: 12px !important;
+  }
+  .detail-head .meta span { display: inline-block !important; }
+
+  /* KPI 그리드: 강제로 4열 flex (grid보다 flex가 강력) */
+  .kpis,
+  .kpi-row {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    justify-content: stretch !important;
+    grid-template-columns: none !important;
+    gap: 4px !important;
+    margin: 0 0 6px 0 !important;
+    width: 100% !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+  .kpi,
+  .kpi.tight {
+    flex: 1 1 0 !important;
+    width: 0 !important;                  /* flex-basis 0 → 균등 분배 */
+    min-width: 0 !important;              /* flex overflow 방지 핵심! */
+    max-width: none !important;
+    padding: 6px 8px !important;
+    border: 1px solid #bbb !important;
+    border-radius: 3px !important;
+    background: white !important;
+    overflow: hidden !important;
+    display: block !important;
+  }
+  .kpi::before,
+  .kpi.accent::before { display: none !important; }
+  .kpi .label {
+    font-size: 7.5pt !important;
+    color: #555 !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 0 3px 0 !important;
+    letter-spacing: -0.02em !important;
+    gap: 4px !important;
+  }
+  .kpi .label .kdot {
+    width: 5px !important;
+    height: 5px !important;
+    flex-shrink: 0 !important;
+  }
+  .kpi .val {
+    font-size: 11pt !important;
+    font-weight: 800 !important;
+    line-height: 1.1 !important;
+    margin: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    color: #000 !important;
+    letter-spacing: -0.03em !important;
+  }
+  .kpi .val .unit {
+    font-size: 7pt !important;
+    font-weight: 600 !important;
+    margin-left: 1px !important;
+    color: #555 !important;
+  }
+  .kpi > div:last-child {
+    font-size: 7pt !important;
+    color: #666 !important;
+    margin: 3px 0 0 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    line-height: 1.2 !important;
+  }
+
+  /* 카드 */
+  .card {
+    border: 1px solid #bbb !important;
+    padding: 8px 10px !important;
+    margin: 0 0 6px 0 !important;
+    background: white !important;
+    border-radius: 3px !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* 2컬럼 그리드 유지 */
+  .row-2 {
+    display: grid !important;
+    grid-template-columns: 1.6fr 1fr !important;
+    gap: 6px !important;
+    margin-bottom: 6px !important;
+  }
+  .detail-body {
+    display: grid !important;
+    grid-template-columns: 1.4fr 1fr !important;
+    gap: 6px !important;
+  }
+
+  /* 공사 진행률 바 */
+  .checks {
+    display: grid !important;
+    grid-template-columns: repeat(5, 1fr) !important;
+    gap: 4px !important;
+  }
+  .checks .check-node,
+  .checks > * {
+    padding: 4px !important;
+    font-size: 8pt !important;
+  }
+
+  /* 타이포 축소 */
+  h1 { font-size: 16pt !important; }
+  h2 { font-size: 12pt !important; }
+  h3 { font-size: 10pt !important; }
+
+  /* 링크 밑줄 제거 */
+  a { color: inherit !important; text-decoration: none !important; }
+
+  /* 백 버튼 등 완전 숨김 재확인 */
+  .kpi.accent {
+    background: white !important;
+    color: #000 !important;
+    border: 1px solid #666 !important;
+  }
+  .kpi.accent .label,
+  .kpi.accent .val,
+  .kpi.accent .val .unit,
+  .kpi.accent > div:last-child { color: #000 !important; }
+  .kpi.accent .label .kdot { background: #666 !important; }
+
+  /* 다른 페이지 (dashboard 등) 인쇄용 최소 대응 */
+  .kpi { break-inside: avoid !important; }
 }
