@@ -384,25 +384,35 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
   const c = { ...baseContract, checks, progress: localProgress };
   const paidPct = c.totalAmount > 0 ? c.paidAmount / c.totalAmount : 0;
 
-  // 체크박스 토글: 즉시 반영 + API 있으면 백그라운드 저장
-  const toggleCheck = async (key) => {
-    const newChecks = { ...checks, [key]: !checks[key] };
-    setLocalChecks(newChecks);
-
-    if (typeof hasApiUrl === 'function' && hasApiUrl()) {
-      setSaving(true);
-      try {
-        await apiClient.updateContract(baseContract.no, { ['chk' + key]: newChecks[key] });
-        toast?.(`${key} · ${newChecks[key] ? '완료' : '해제'}`, 'success');
-        onUpdated?.();
-      } catch (e) {
-        toast?.('저장 실패: ' + e.message, 'error');
-      } finally {
-        setSaving(false);
-      }
-    } else {
-      toast?.('로컬에서만 변경됨 (API 미연결)', 'default');
+  // 단계 선택: 화면에서만 바꾸고, [저장] 을 눌러야 한 번에 저장
+  const checksEditable = typeof canEdit !== 'function' || canEdit();
+  const changedKeys = CHECK_KEYS.filter(k => !!checks[k] !== !!(baseContract.checks || {})[k]);
+  const checksDirty = changedKeys.length > 0;
+  const toggleCheck = (key) => {
+    if (!checksEditable) { toast?.('조회 권한만 있습니다', 'error'); return; }
+    setLocalChecks({ ...checks, [key]: !checks[key] });
+  };
+  const cancelChecks = () => setLocalChecks(null);
+  const saveChecks = async () => {
+    if (!checksDirty || saving) return;
+    const patch = {};
+    changedKeys.forEach(k => { patch['chk' + k] = !!checks[k]; });
+    setSaving(true);
+    try {
+      await apiClient.updateContract(baseContract.no, patch);
+      toast?.(`공사 진행 ${changedKeys.length}개 단계 저장 완료`, 'success');
+      await onUpdated?.();
+      setLocalChecks(null);
+    } catch (e) {
+      toast?.('저장 실패: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
     }
+  };
+  // 저장하지 않은 단계 변경이 있으면 목록으로 나갈 때 확인
+  const handleBack = () => {
+    if (checksDirty && !window.confirm('공사 진행 단계 변경이 저장되지 않았습니다. 저장하지 않고 나갈까요?')) return;
+    onBack?.();
   };
 
   // 해당 거래처의 다른 계약
@@ -608,7 +618,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
 
   return (
     <>
-      <button className="back-btn" onClick={onBack}><Icon name="chevronLeft" size={14}/>계약 리스트로</button>
+      <button className="back-btn" onClick={handleBack}><Icon name="chevronLeft" size={14}/>계약 리스트로</button>
 
       <div className="detail-head">
         <div>
@@ -777,9 +787,19 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
               {saving && <span style={{fontSize:11,fontWeight:500,color:'var(--ink-3)'}}>· 저장 중…</span>}
             </div>
             <div style={{fontSize:11,color:'var(--ink-3)',marginTop:2}}>
-              단계 클릭해 토글 · <b style={{color:'var(--ink-2)'}}>{doneCount}/5</b> 완료
+              단계를 모두 선택한 뒤 저장 · <b style={{color:'var(--ink-2)'}}>{doneCount}/5</b> 완료
             </div>
           </div>
+          {checksDirty && (
+            <div className="no-print" style={{display:'flex',alignItems:'center',gap:8,marginLeft:'auto',marginRight:16}}>
+              <span style={{fontSize:11.5,color:'var(--warn, #9A6A1E)',fontWeight:600}}>저장 안 된 변경 {changedKeys.length}건</span>
+              <button type="button" className="btn-ghost" onClick={cancelChecks} disabled={saving} style={{height:32,fontSize:12,padding:'0 12px'}}>취소</button>
+              <button type="button" className="btn-primary" onClick={saveChecks} disabled={saving} style={{height:32,fontSize:12,padding:'0 14px'}}>
+                <Icon name="check" size={13} stroke={2.4}/>
+                {saving ? '저장 중…' : '저장'}
+              </button>
+            </div>
+          )}
           <div style={{fontSize:22,fontWeight:800,color:'var(--green-800)',letterSpacing:'-0.03em'}} className="tnum">
             {Math.round(c.progress * 100)}<span style={{fontSize:12,color:'var(--ink-3)',marginLeft:2}}>%</span>
           </div>
