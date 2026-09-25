@@ -354,6 +354,7 @@ const SiteFoldersCard = ({ contract }) => {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [needConnect, setNeedConnect] = useState(false);
   const [creating, setCreating] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const toast = window.useToast ? window.useToast() : null;
@@ -364,14 +365,21 @@ const SiteFoldersCard = ({ contract }) => {
   );
 
   // ─── 실연동: Drive 조회 ───
-  const loadFromDrive = useCallback(async (force) => {
+  // interactive=false : 화면 진입 시 자동 조회 (Google 로그인 창을 띄우지 않음)
+  const loadFromDrive = useCallback(async (force, interactive = true) => {
     if (!contract?.no) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchSiteFoldersFromDrive(contract, { force: !!force });
+      const data = await fetchSiteFoldersFromDrive(contract, { force: !!force, interactive });
+      setNeedConnect(false);
       setState({ ...data, _pending: false });
     } catch (e) {
+      if (e && e.needConnect) {
+        setNeedConnect(true);
+        setState(s => ({ ...s, _pending: false }));
+        return;
+      }
       const msg = extractDriveError(e);
       setError(msg);
       // 콘솔에 원본도 남김 (개발자용)
@@ -394,7 +402,7 @@ const SiteFoldersCard = ({ contract }) => {
   // 계약 바뀔 때마다 재조회
   useEffect(() => {
     if (mode === 'live') {
-      loadFromDrive(false);
+      loadFromDrive(false, false);
     } else {
       setState(getMockSiteFolders(contract));
     }
@@ -537,6 +545,20 @@ const SiteFoldersCard = ({ contract }) => {
         </div>
       </div>
 
+      {/* Drive 연결 안내 (자동으로 로그인 창을 띄우지 않음) */}
+      {needConnect && !isMock && !loading && (
+        <div className="no-print" style={{
+          padding:'10px 12px', marginBottom:12, background:'#EEF4F8', border:'1px solid #C8DBE5',
+          borderRadius:6, fontSize:12, color:'#1a4a70', display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
+        }}>
+          <span style={{flex:1, minWidth:180}}>Google Drive 폴더를 보려면 한 번 연결해 주세요. (약 1시간 유지)</span>
+          <button onClick={() => loadFromDrive(false, true)}
+            style={{padding:'5px 12px', fontSize:12, fontWeight:700, background:'#fff', color:'#1a4a70', border:'1px solid #C8DBE5', borderRadius:5, cursor:'pointer'}}>
+            Google Drive 연결
+          </button>
+        </div>
+      )}
+
       {/* 에러 배너 */}
       {error && !isMock && (() => {
         // 에러 패턴 매칭 → 원인별 대응 안내
@@ -613,8 +635,8 @@ const SiteFoldersCard = ({ contract }) => {
         </div>
       )}
 
-      {/* 프로젝트 폴더 상태 */}
-      {!isPending && (state.projectFolder ? (
+      {/* 프로젝트 폴더 상태 (Drive 연결 전에는 숨김) */}
+      {!isPending && !needConnect && (state.projectFolder ? (
         <a
           href={state.projectFolder.url}
           target="_blank" rel="noreferrer"
@@ -669,7 +691,7 @@ const SiteFoldersCard = ({ contract }) => {
       ))}
 
       {/* 카테고리 5개 */}
-      {!isPending && (
+      {!isPending && !needConnect && (
         <div style={{display:'flex', flexDirection:'column', gap:6}}>
           {SITE_CATEGORIES.map(cat => (
             <CategoryRow

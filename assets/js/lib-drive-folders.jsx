@@ -404,6 +404,13 @@ async function fetchSiteFoldersFromDrive(contract, options) {
     if (cached) return { ...cached, _cached: true };
   }
 
+  // 화면을 열 때 자동 조회: 토큰이 없으면 Google 로그인 창을 띄우지 않고 "연결" 버튼을 보여줌
+  if (opts.interactive === false && !hasDriveToken()) {
+    const err = new Error('Google Drive 연결 필요');
+    err.needConnect = true;
+    throw err;
+  }
+
   await loadGoogleApis();
   await requestAccessToken();
 
