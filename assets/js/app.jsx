@@ -149,6 +149,7 @@ const App = () => {
               onBack={() => nav('contracts')}
               onOpenExpense={(c) => setExpenseContract(c)}
               onUpdated={refresh}
+              onSelectContract={selectContract}
             />
           )}
           {route.screen === 'receivable' && (

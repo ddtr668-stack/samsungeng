@@ -158,7 +158,8 @@ const api = {
   bootstrap: () => apiFetch('bootstrap'),
   listContracts: () => apiFetch('contracts'),
   getContract: (no) => apiFetch('contract', { params: { no } }),
-  updateContract: (no, patch) => apiFetch('update', { method:'POST', body:{ no, patch } }),
+  // checkDates: 공사 진행 단계별 날짜 { 배관:'2026-09-25', ... } (선택)
+  updateContract: (no, patch, checkDates) => apiFetch('update', { method:'POST', body: checkDates ? { no, patch, checkDates } : { no, patch } }),
   createContract: (contract) => apiFetch('create', { method:'POST', body:{ contract } }),
   listClients: () => apiFetch('clients'),
   expenseHistory: () => apiFetch('expenseHistory'),
