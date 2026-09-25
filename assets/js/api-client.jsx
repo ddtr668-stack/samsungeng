@@ -18,6 +18,16 @@ const DEFAULT_SHEET_NAME = '계약관리_v1.3';
 // 모든 브라우저 공통 URL 은 assets/config.js 의 apiUrl, 이 브라우저에서만 바꾸려면 설정 화면에서 저장
 const getConfigApiUrl = () => ((window.APP_CONFIG && window.APP_CONFIG.apiUrl) || '').trim();
 const getApiUrl = () => (localStorage.getItem(API_URL_KEY) || getConfigApiUrl()).trim();
+// config.js 의 주소가 바뀌면(재배포 등) 브라우저에 남아 있던 예전 주소는 버리고 새 주소를 따름
+(() => {
+  try {
+    const cfg = getConfigApiUrl();
+    if (cfg && localStorage.getItem('hb.apiUrlConfigSeen') !== cfg) {
+      localStorage.removeItem(API_URL_KEY);
+      localStorage.setItem('hb.apiUrlConfigSeen', cfg);
+    }
+  } catch (e) { /* 저장소 접근 불가 시 무시 */ }
+})();
 const setApiUrl = (url) => {
   const trimmed = (url || '').trim();
   if (trimmed) localStorage.setItem(API_URL_KEY, trimmed);
