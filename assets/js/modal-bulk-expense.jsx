@@ -78,11 +78,6 @@ function buildBulkExpenseHtml({ rows, docNo, docDate, payDate, author, subcontra
     <tr><th>문서번호</th><td class="l">${E(docNo)}</td><th>품의일</th><td class="l">${E(D(docDate))}</td></tr>
     <tr><th>작성자</th><td class="l">${E(author || '-')}</td><th>지급 예정일</th><td class="l">${E(D(payDate))}</td></tr>
   </table>
-  <table style="margin-top:2mm">
-    <colgroup><col style="width:24mm"><col><col><col></colgroup>
-    <tr><th rowspan="2">결 재</th><th>담당</th><th>팀장</th><th>대표</th></tr>
-    <tr><td style="height:16mm"></td><td></td><td></td></tr>
-  </table>
   <table class="amount"><tr>
     <th>금회 요청금액</th><td class="kor">${total > 0 ? E(korean) : '금액 미입력'}</td>
     <td class="num">(￦${N(total)})<span class="vat">부가세포함</span></td></tr></table>
