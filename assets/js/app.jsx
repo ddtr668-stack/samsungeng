@@ -21,7 +21,9 @@ const App = () => {
     setViewManagerState(v || 'all');
     try { localStorage.setItem('hb.viewManager', v || 'all'); } catch {}
   }, []);
-  const [idleLeft, setIdleLeft] = useState(null);   // 자동 로그아웃까지 남은 초 (경고 표시용)
+  const [idleLeft, setIdleLeft] = useState(null);
+  // 관리자: 가입·승인된 담당자 이름 (계약이 아직 없는 사람도 담당자 목록에 표시)
+  const [userNames, setUserNames] = useState([]);   // 자동 로그아웃까지 남은 초 (경고 표시용)
   const [route, setRoute] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
     catch { return { screen:'dashboard' }; }
@@ -83,6 +85,13 @@ const App = () => {
 
   // 사용 감지 · 10분 무사용 시 자동 로그아웃
   const loggedInView = !needLogin && !!data;
+
+  useEffect(() => {
+    if (!loggedInView || !(typeof isAdmin === 'function' && isAdmin())) { setUserNames([]); return; }
+    apiClient.listUsers()
+      .then(r => setUserNames((r.users || []).filter(u => u.status === 'active' && u.name).map(u => u.name)))
+      .catch(() => setUserNames([]));
+  }, [loggedInView]);
   useEffect(() => {
     if (!loggedInView) { setIdleLeft(null); return; }
     let lastWrite = 0;
@@ -159,6 +168,7 @@ const App = () => {
 
   const managerStats = (() => {
     const m = {};
+    userNames.forEach(n => { m[n] = m[n] || 0; });
     data.contracts.forEach(c => { if (c.manager) m[c.manager] = (m[c.manager] || 0) + 1; });
     return Object.keys(m).sort().map(name => ({ name, count: m[name] }));
   })();
@@ -217,7 +227,7 @@ const App = () => {
             <ScreenDashboard key={uiTick} data={data} onNav={nav} onSelectContract={selectContract} viewManager={activeManager} onManagerChange={setViewManager}/>
           )}
           {route.screen === 'contracts' && (
-            <ScreenContracts data={viewData} onSelectContract={selectContract} initialSearch={globalSearch} onOpenNew={() => setNewContractOpen(true)}/>
+            <ScreenContracts data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} initialSearch={globalSearch} onOpenNew={() => setNewContractOpen(true)}/>
           )}
           {route.screen === 'detail' && (
             <ScreenDetail
@@ -230,13 +240,13 @@ const App = () => {
             />
           )}
           {route.screen === 'receivable' && (
-            <ScreenReceivable data={viewData} onSelectContract={selectContract}/>
+            <ScreenReceivable data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract}/>
           )}
           {route.screen === 'clients' && (
-            <ScreenClients data={viewData} onSelectContract={selectContract} onUpdated={refresh}/>
+            <ScreenClients data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onUpdated={refresh}/>
           )}
           {route.screen === 'expense' && (
-            <ScreenExpense data={viewData} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
+            <ScreenExpense data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
           )}
           {route.screen === 'reports' && (
             <ScreenReports data={data} viewManager={activeManager} onManagerChange={setViewManager}/>

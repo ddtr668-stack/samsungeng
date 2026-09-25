@@ -5,8 +5,8 @@
 const ScreenReports = ({ data: allData, viewManager, onManagerChange }) => {
   const [tab, setTab] = useState('category');  // category | monthly | yearly
   // ─── 담당자 선택 (대시보드와 같은 방식으로 선택한 담당자의 계약만 재집계) ───
-  const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean))].sort(), [allData]);
-  const selManager = viewManager && viewManager !== 'all' && managers.includes(viewManager) ? viewManager : 'all';
+  const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean).concat(viewManager && viewManager !== 'all' ? [viewManager] : []))].sort(), [allData, viewManager]);
+  const selManager = viewManager && viewManager !== 'all' ? viewManager : 'all';
   const pickManager = (v) => onManagerChange?.(v);
   const data = useMemo(() => buildDashboardView(allData, selManager, null), [allData, selManager]);
   const period = useMemo(() => {

@@ -63,6 +63,30 @@ const buildDashboardView = (data, manager, range) => {
   };
 };
 
+// ─── 담당자 선택 (각 목록 화면 상단 · 사이드바와 같은 선택을 공유) ───
+const ManagerPicker = ({ managers, value, onChange }) => {
+  if (!managers || !managers.length || !onChange) return null;
+  return (
+    <select className="filter-select no-print" value={value || 'all'} onChange={e => onChange(e.target.value)}
+      title="담당자별 보기" style={{height:36,fontSize:13,fontWeight:600}}>
+      <option value="all">담당자 · 전체</option>
+      {managers.map(m => <option key={m.name} value={m.name}>{m.name} 담당{m.count != null ? ` (${m.count})` : ''}</option>)}
+    </select>
+  );
+};
+
+// ─── CSV 저장 (엑셀에서 한글 깨짐 없이 열리도록 BOM 포함) ───
+const downloadCsv = (fileBase, head, rows) => {
+  const esc = v => { const t = String(v == null ? '' : v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const lines = [head.map(esc).join(',')].concat(rows.map(r => r.map(esc).join(',')));
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${fileBase}_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
 // ─── 숫자 포맷 ───
 const fmtKRW = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -204,7 +228,7 @@ const Sidebar = ({ current, onNav, counts, onLogout, managers, activeManager, on
       </nav>
 
       {/* 담당자별 보기: 누르면 대시보드·계약·미수금·거래처·지출·리포트가 모두 그 담당자 기준으로 바뀜 */}
-      {managers && managers.length > 1 && (
+      {managers && managers.length > 0 && (
         <>
           <div className="nav-label">담당자</div>
           <nav className="nav" style={{maxHeight:220,overflowY:'auto'}}>
@@ -465,5 +489,5 @@ Object.assign(window, {
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,
   Icon, Sidebar, Topbar, usePagination, Pager,
   Amt, StatusPill, CatTag, MiniProgress, CardHead,
-  NAV, contractCode, buildDashboardView,
+  NAV, contractCode, buildDashboardView, ManagerPicker, downloadCsv,
 });

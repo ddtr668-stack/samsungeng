@@ -2,7 +2,7 @@
    화면 5 · 거래처 관리
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenClients = ({ data, onSelectContract, onUpdated }) => {
+const ScreenClients = ({ data, onSelectContract, onUpdated, managerOptions, viewManager, onManagerChange }) => {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('total');
   const [sortDir, setSortDir] = useState('desc');
@@ -91,7 +91,11 @@ const ScreenClients = ({ data, onSelectContract, onUpdated }) => {
           <div className="page-sub">총 <b>{data.clientStats.length}개</b> 거래처 · 등록증 보유 <b>{data.clients.length}개</b></div>
         </div>
         <div className="hstack">
-          <button className="btn-ghost"><Icon name="download" size={14}/>거래처 CSV</button>
+          <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
+          <button className="btn-ghost" title="지금 목록을 엑셀(CSV)로 저장" onClick={() => downloadCsv('clients',
+            ['거래처','사업자번호','대표자','주소','계약 건수','총 계약금','수금액','미수 잔금','구분'],
+            sorted.map(c => { const d = findDetail(c.name) || {}; return [c.name, d.bizNo || '', d.ceo || '', d.address || '', c.count, c.total, c.paid, c.balance, (c.categories || []).join(' ')]; }))}>
+            <Icon name="download" size={14}/>거래처 CSV</button>
           <button className="btn-primary" onClick={openNewClient}><Icon name="plus" size={14} stroke={2.2}/>거래처 등록</button>
         </div>
       </div>

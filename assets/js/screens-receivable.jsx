@@ -2,7 +2,7 @@
    화면 4 · 미수금 관리
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenReceivable = ({ data, onSelectContract }) => {
+const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager, onManagerChange }) => {
   const [category, setCategory] = useState('all');
   const [status, setStatus] = useState('all');
   const [year, setYear] = useState('all');
@@ -120,7 +120,11 @@ const ScreenReceivable = ({ data, onSelectContract }) => {
           </div>
         </div>
         <div className="hstack">
-          <button className="btn-ghost"><Icon name="download" size={14}/>수금 리포트</button>
+          <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
+          <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('receivables',
+            ['계약번호','계약일','담당자','구분','거래처','프로젝트명','계약금','수금액','미수 잔금','수금률','상태'],
+            sorted.map(c => [contractCode(c), c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.totalAmount, c.paidAmount, c.balance, c.totalAmount ? Math.round(c.paidAmount / c.totalAmount * 100) + '%' : '', c.status]))}>
+            <Icon name="download" size={14}/>수금 리포트</button>
           <button className="btn-primary"><Icon name="file" size={14}/>독촉장 발송</button>
         </div>
       </div>

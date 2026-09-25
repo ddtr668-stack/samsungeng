@@ -2,7 +2,7 @@
    화면 6 · 지출품의서·기성 관리
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenExpense = ({ data, onSelectContract, onOpenExpense }) => {
+const ScreenExpense = ({ data, onSelectContract, onOpenExpense, managerOptions, viewManager, onManagerChange }) => {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
 
@@ -40,7 +40,11 @@ const ScreenExpense = ({ data, onSelectContract, onOpenExpense }) => {
           <div className="page-sub">도급업체 지출 이력 · <b>{items.length}건</b> 계약 관리 중</div>
         </div>
         <div className="hstack">
-          <button className="btn-ghost"><Icon name="download" size={14}/>지출 리포트</button>
+          <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
+          <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('expenses',
+            ['계약번호','담당자','현장','거래처','도급업체','도급금액','기성 완료','기성 잔액','기성률','상태'],
+            filtered.map(c => [contractCode(c), c.manager || '', c.projectName, c.client, c.subcontractor, c.subcontractAmount, c.subcontractPaid, c.subcontractBalance, Math.round((c.기성률 || 0) * 100) + '%', c.expenseStatus]))}>
+            <Icon name="download" size={14}/>지출 리포트</button>
           <button className="btn-primary"><Icon name="plus" size={14} stroke={2.2}/>지출품의서 작성</button>
         </div>
       </div>
