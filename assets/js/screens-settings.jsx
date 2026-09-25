@@ -87,36 +87,69 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
     }
   };
 
-  const saveSheet = () => {
+  // 서버(Apps Script)에 저장 → 다른 브라우저에서 로그인해도 같은 설정 유지
+  const pushShared = async (okMsg) => {
+    try {
+      await pushAppSettings();
+      toast?.(okMsg + ' (모든 브라우저에 적용)', 'success');
+      return true;
+    } catch (e) {
+      toast?.('서버 저장 실패 · 이 브라우저에만 저장됨: ' + e.message, 'error');
+      return false;
+    }
+  };
+
+  const saveSheet = async () => {
     setSheetUrl(sheetUrl);
     setSheetName(sheetName);
+    if (!(await pushShared('스프레드시트 정보가 저장되었습니다'))) return;
     setSheetSaved(true);
-    toast?.('스프레드시트 정보가 저장되었습니다', 'success');
     setTimeout(() => setSheetSaved(false), 2000);
     // 사이드바 즉시 반영을 위한 리렌더 (부모 트리거 재활용)
     onApiUpdated?.();
   };
 
-  const saveDriveCreds = () => {
+  const saveDriveCreds = async () => {
     setGDriveApiKey(driveApiKey);
     setGDriveClientId(driveClientId);
+    if (!(await pushShared('Google Drive 인증 정보가 저장되었습니다'))) return;
     setDriveSaved(true);
-    toast?.('Google Drive 인증 정보가 저장되었습니다', 'success');
     setTimeout(() => setDriveSaved(false), 2000);
   };
-  const clearDriveCreds = () => {
+  const clearDriveCreds = async () => {
     setGDriveApiKey('');
     setGDriveClientId('');
     setDriveApiKey('');
     setDriveClientId('');
-    toast?.('Google Drive 인증 정보가 삭제되었습니다', 'success');
+    await pushShared('Google Drive 인증 정보가 삭제되었습니다');
+  };
+
+  // ─── 관리자 비밀번호 변경 ───
+  const [pwCur, setPwCur] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwNew2, setPwNew2] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+  const changePassword = async () => {
+    if (pwNew.length < 6) { toast?.('새 비밀번호는 6자 이상으로 해주세요', 'error'); return; }
+    if (pwNew !== pwNew2) { toast?.('새 비밀번호가 서로 다릅니다', 'error'); return; }
+    setPwBusy(true);
+    try {
+      await apiClient.changePassword(pwCur, pwNew);
+      setPwCur(''); setPwNew(''); setPwNew2('');
+      toast?.('비밀번호가 변경되었습니다. 다른 브라우저는 다시 로그인해야 합니다.', 'success');
+    } catch (e) {
+      toast?.('변경 실패: ' + e.message, 'error');
+    } finally {
+      setPwBusy(false);
+    }
   };
 
   const source = data?._source;
   const fetchedAt = data?._fetchedAt || data?._cacheTs;
 
   const handleSave = () => {
-    setApiUrl(url);
+    // config.js 값과 같으면 브라우저 개별 저장값을 지워 공통 설정을 따르게 함
+    setApiUrl(url.trim() === getConfigApiUrl() ? '' : url);
     setTestResult(null);
     toast?.('API URL이 저장되었습니다', 'success');
     onApiUpdated?.();
@@ -186,7 +219,10 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
               placeholder="https://script.google.com/macros/s/.../exec"
               style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
             />
-            <div className="hint">배포 → 새 배포 → 유형 "웹 앱" → 액세스 "본인" 또는 "조직 내" → 배포 URL 복사</div>
+            <div className="hint">
+              배포 → 새 배포 → 유형 "웹 앱" → 액세스 "모든 사용자" → 배포 URL 복사.
+              {' '}모든 브라우저 공통 주소는 <code>assets/config.js</code> 의 apiUrl 입니다{getConfigApiUrl() ? ' (등록됨)' : ' (미등록 · 여기서 저장하면 이 브라우저에만 적용)'}.
+            </div>
           </div>
 
           <div className="hstack" style={{marginTop:16}}>
@@ -213,7 +249,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
 
           <div style={{marginTop:24,paddingTop:20,borderTop:'1px solid var(--line)'}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-              <div style={{fontSize:12.5,fontWeight:700,color:'var(--ink-2)'}}>연결된 스프레드시트</div>
+              <div style={{fontSize:12.5,fontWeight:700,color:'var(--ink-2)'}}>데이터 소스 · 연결된 스프레드시트</div>
               {sheetUrl && (
                 <a
                   href={sheetUrl} target="_blank" rel="noreferrer"
@@ -246,7 +282,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
                 placeholder="https://docs.google.com/spreadsheets/d/.../edit"
                 style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
               />
-              <div className="hint">사이드바의 "데이터 소스" 링크가 이 주소로 연결됩니다.</div>
+              <div className="hint">위 "현재 링크 열기" 버튼이 이 주소로 연결됩니다.</div>
             </div>
 
             <div className="hstack" style={{marginTop:12}}>
@@ -277,17 +313,42 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
           <ol style={{margin:0,paddingLeft:22,fontSize:13,color:'var(--ink-2)',lineHeight:1.75}}>
             <li>구글 스프레드시트에서 <b>확장 프로그램 → Apps Script</b> 열기</li>
             <li>기존 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Code.gs</code>, <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>BusinessTools.gs</code>, <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>ExpenseRequest.gs</code>가 이미 있는지 확인</li>
-            <li>새 파일 추가 → 이름을 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>DashboardApi</code>로 지정</li>
-            <li>제공드린 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>DashboardApi.gs</code> 전체 붙여넣기</li>
+            <li>새 파일 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>DashboardApi</code>, <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Auth</code> 추가 → 제공된 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>.gs</code> 전체 붙여넣기</li>
+            <li><code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>Auth.gs</code> 의 <b>setAdminPassword</b> 에 비밀번호 입력 → 실행 → 입력값 다시 지우기</li>
             <li>오른쪽 위 <b>배포 → 새 배포</b></li>
-            <li>유형 <b>웹 앱</b> · 다음 사용자로 실행 <b>나</b> · 액세스 <b>본인만</b> 또는 <b>조직 내</b></li>
-            <li>배포 후 나오는 <b>URL을 복사</b>해서 왼쪽 입력창에 붙여넣고 저장</li>
+            <li>유형 <b>웹 앱</b> · 다음 사용자로 실행 <b>나</b> · 액세스 <b>모든 사용자</b> (데이터는 로그인해야만 조회)</li>
+            <li>배포 후 나오는 <b>URL</b>을 <code style={{background:'var(--surface-2)',padding:'1px 5px',borderRadius:4,fontSize:11.5}}>assets/config.js</code> 의 apiUrl 에 등록</li>
             <li>연결 테스트 통과하면 <b>다시 불러오기</b> 클릭</li>
           </ol>
 
           <div style={{marginTop:20,padding:'14px 16px',background:'var(--bronze-50)',borderRadius:10,border:'1px solid #ECD9AE',fontSize:12,color:'var(--bronze-800)',lineHeight:1.6}}>
             <b>💡 팁</b> · 시트 컬럼 순서는 <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>DashboardApi.gs</code>의 <code style={{background:'#fff',padding:'1px 4px',borderRadius:3}}>COL_MAP_</code>과 일치해야 합니다. 다르면 그 부분만 수정하세요.
           </div>
+        </div>
+      </div>
+
+      {/* 관리자 계정 */}
+      <div className="card pad-lg">
+        <CardHead title="관리자 계정" sub={`로그인 아이디 · ${(getAuthUser() && getAuthUser().id) || 'admin'} · 비밀번호를 바꾸면 다른 브라우저의 로그인은 해제됩니다`}/>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(180px, 1fr))',gap:12,marginTop:6}}>
+          <div className="form-field">
+            <label>현재 비밀번호</label>
+            <input type="password" value={pwCur} onChange={e => setPwCur(e.target.value)} autoComplete="current-password"/>
+          </div>
+          <div className="form-field">
+            <label>새 비밀번호 (6자 이상)</label>
+            <input type="password" value={pwNew} onChange={e => setPwNew(e.target.value)} autoComplete="new-password"/>
+          </div>
+          <div className="form-field">
+            <label>새 비밀번호 확인</label>
+            <input type="password" value={pwNew2} onChange={e => setPwNew2(e.target.value)} autoComplete="new-password"/>
+          </div>
+        </div>
+        <div className="hstack" style={{marginTop:14}}>
+          <button className="btn-primary" onClick={changePassword} disabled={pwBusy || !pwCur || !pwNew || !pwNew2}>
+            <Icon name="check" size={14} stroke={2.4}/>
+            {pwBusy ? '변경 중…' : '비밀번호 변경'}
+          </button>
         </div>
       </div>
 
