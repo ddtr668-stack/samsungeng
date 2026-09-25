@@ -2,8 +2,55 @@
    화면 1 · 종합 대시보드
 ═══════════════════════════════════════════════════════════════ */
 
-const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
+// ─── 담당자별 대시보드: 선택한 담당자의 계약만으로 요약·통계를 다시 계산 ───
+const DASH_MANAGER_KEY = 'hb.dashManager';
+const buildDashboardView = (data, manager) => {
+  if (!manager || manager === 'all') return data;
+  const contracts = data.contracts.filter(c => c.manager === manager);
+  const summary = { totalAmount:0, paidAmount:0, balance:0, profit:0, statusCounts:{ 완료:0, 진행중:0, 미진행:0 } };
+  const cat = {}, mon = {};
+  contracts.forEach(c => {
+    summary.totalAmount += c.totalAmount || 0; summary.paidAmount += c.paidAmount || 0;
+    summary.balance += c.balance || 0; summary.profit += c.profit || 0;
+    if (c.status === '완료') summary.statusCounts.완료++;
+    else if (c.status === '진행중') summary.statusCounts.진행중++;
+    else summary.statusCounts.미진행++;
+    const k = c.category || '기타';
+    cat[k] = cat[k] || { name:k, count:0, total:0, paid:0, balance:0, profit:0 };
+    cat[k].count++; cat[k].total += c.totalAmount || 0; cat[k].paid += c.paidAmount || 0; cat[k].balance += c.balance || 0; cat[k].profit += c.profit || 0;
+    if (c.contractDate) {
+      const ym = c.contractDate.substring(0, 7);
+      mon[ym] = mon[ym] || { month:ym, count:0, total:0, paid:0, balance:0, profit:0 };
+      mon[ym].count++; mon[ym].total += c.totalAmount || 0; mon[ym].paid += c.paidAmount || 0; mon[ym].balance += c.balance || 0; mon[ym].profit += c.profit || 0;
+    }
+  });
+  return {
+    ...data,
+    contracts,
+    summary,
+    categoryStats: Object.values(cat).map(v => ({ ...v, marginRate: v.total ? v.profit / v.total : 0 })).sort((a, b) => b.total - a.total),
+    monthlyStats: Object.keys(mon).sort().map(k => mon[k]),
+    topBalance: contracts.filter(c => c.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 10),
+  };
+};
+
+const ScreenDashboard = ({ data: allData, onNav, onSelectContract }) => {
+  const managers = useMemo(() => [...new Set(allData.contracts.map(c => c.manager).filter(Boolean))].sort(), [allData]);
+  const [manager, setManagerSel] = useState(() => { try { return localStorage.getItem(DASH_MANAGER_KEY) || 'all'; } catch { return 'all'; } });
+  const selManager = manager !== 'all' && !managers.includes(manager) ? 'all' : manager;
+  const pickManager = (v) => { setManagerSel(v); try { localStorage.setItem(DASH_MANAGER_KEY, v); } catch {} };
+  const data = useMemo(() => buildDashboardView(allData, selManager), [allData, selManager]);
+
   const s = data.summary;
+  // 이번 달 · 지난달 신규 계약 건수 (계약일 기준)
+  const monthCount = (offset) => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + offset);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return data.contracts.filter(c => (c.contractDate || '').startsWith(ym)).length;
+  };
+  const newThisMonth = monthCount(0);
+  const newLastMonth = monthCount(-1);
+  const receivableCount = data.contracts.filter(c => c.balance > 0).length;
   const cats = data.categoryStats;
   const monthly = data.monthlyStats;
   const topBal = data.topBalance.slice(0, 5);
@@ -22,18 +69,25 @@ const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
   }, [monthly]);
 
   // 차트 스케일 - 최근 12개월 총계약
-  const maxTrend = Math.max(...trend.map(t => t.total));
+  const maxTrend = Math.max(1, ...trend.map(t => t.total));
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h1><span className="hl">종합 경영</span> 대시보드</h1>
+          <h1>{selManager === 'all' ? <><span className="hl">종합 경영</span> 대시보드</> : <><span className="hl">{selManager}</span> 담당 대시보드</>}</h1>
           <div className="page-sub">
-            2026년 9월 16일 (수) · 기준일 · {typeof getSheetName === 'function' ? getSheetName() : '계약관리'} · 총 <b>{s.totalAmount > 0 ? '105건' : '0건'}</b> 계약 집계
+            {(() => { const d = new Date(); return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 (${'일월화수목금토'[d.getDay()]})`; })()} · 기준일 · {typeof getSheetName === 'function' ? getSheetName() : '계약관리'} · 총 <b>{data.contracts.length}건</b> 계약 집계
           </div>
         </div>
         <div className="hstack">
+          {managers.length > 0 && (
+            <select className="filter-select" value={selManager} onChange={e => pickManager(e.target.value)}
+              title="담당자별 대시보드" style={{height:36,fontSize:13,fontWeight:600}}>
+              <option value="all">담당자 · 전체</option>
+              {managers.map(m => <option key={m} value={m}>{m} 담당</option>)}
+            </select>
+          )}
           <button className="btn-ghost">
             <Icon name="download" size={14}/>
             엑셀 내보내기
@@ -62,7 +116,7 @@ const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
           <div className="label"><span className="kdot"></span>총 계약금액</div>
           <div className="val tnum">{fmtKRW억(s.totalAmount)}<span className="sub">원</span></div>
           <div>
-            <span className="delta up" style={{background:'rgba(184,135,59,.22)',color:'#F0DFB6'}}>▲ 3건</span>
+            <span className="delta up" style={{background:'rgba(184,135,59,.22)',color:'#F0DFB6'}}>▲ {newLastMonth}건</span>
             <span className="compare">지난달 신규</span>
           </div>
           <svg className="spark" width="88" height="34" viewBox="0 0 88 34">
@@ -209,7 +263,7 @@ const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
         <div className="card">
           <CardHead
             title="계약 진행 현황"
-            sub={`총 105건 중 완료 ${s.statusCounts.완료}건 · 진행중 ${s.statusCounts.진행중}건 · 미진행 ${s.statusCounts.미진행}건`}
+            sub={`총 ${data.contracts.length}건 중 완료 ${s.statusCounts.완료}건 · 진행중 ${s.statusCounts.진행중}건 · 미진행 ${s.statusCounts.미진행}건`}
           />
           <div style={{display:'flex',alignItems:'center',gap:24}}>
             <svg width="150" height="150" viewBox="0 0 42 42">
@@ -259,11 +313,11 @@ const ScreenDashboard = ({ data, onNav, onSelectContract }) => {
           <div style={{marginTop:20,paddingTop:16,borderTop:'1px solid var(--line)',display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div>
               <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>이번 달 신규</div>
-              <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:2,letterSpacing:'-0.02em'}} className="tnum">3건</div>
+              <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:2,letterSpacing:'-0.02em'}} className="tnum">{newThisMonth}건</div>
             </div>
             <div>
-              <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>완공 예정 (D-30)</div>
-              <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:2,letterSpacing:'-0.02em'}} className="tnum">2건</div>
+              <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>미수 잔금 계약</div>
+              <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:2,letterSpacing:'-0.02em'}} className="tnum">{receivableCount}건</div>
             </div>
           </div>
         </div>
