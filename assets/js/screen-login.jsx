@@ -4,7 +4,8 @@
 
 const LoginScreen = ({ onLoggedIn }) => {
   const needUrl = !hasApiUrl();
-  const [serverUrl, setServerUrl] = useState('');
+  const [showUrl, setShowUrl] = useState(needUrl);
+  const [serverUrl, setServerUrl] = useState(() => getApiUrl());
   const [id, setId] = useState(() => (getAuthUser() && getAuthUser().id) || 'admin');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -14,12 +15,13 @@ const LoginScreen = ({ onLoggedIn }) => {
     e.preventDefault();
     if (busy) return;
     setError('');
-    if (needUrl) {
-      if (!/^https:\/\/script\.google\.com\//.test(serverUrl.trim())) {
+    if (showUrl) {
+      if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(serverUrl.trim())) {
         setError('Apps Script 웹앱 URL(https://script.google.com/…/exec)을 입력해 주세요.');
         return;
       }
-      setApiUrl(serverUrl);
+      // config.js 값과 같으면 개별 저장값을 지워 공통 설정을 따르게 함
+      setApiUrl(serverUrl.trim() === getConfigApiUrl() ? '' : serverUrl);
     }
     setBusy(true);
     try {
@@ -35,7 +37,6 @@ const LoginScreen = ({ onLoggedIn }) => {
       try { const r = await apiClient.ping(); ver = r.version || '버전 정보 없음 (구버전 코드)'; }
       catch (e2) { ver = '확인 실패: ' + e2.message; }
       setError(msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: 2026-09-25-02)');
-      if (needUrl) setApiUrl('');
     } finally {
       setBusy(false);
     }
@@ -56,7 +57,7 @@ const LoginScreen = ({ onLoggedIn }) => {
           </div>
         </div>
 
-        {needUrl && (
+        {showUrl && (
           <div className="form-field full" style={{marginBottom:12}}>
             <label>서버 주소 (Apps Script 웹앱 URL)</label>
             <input
@@ -64,7 +65,7 @@ const LoginScreen = ({ onLoggedIn }) => {
               placeholder="https://script.google.com/macros/s/.../exec"
               style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
             />
-            <div className="hint">assets/config.js 에 등록해 두면 이 칸은 나오지 않습니다.</div>
+            <div className="hint">Apps Script → 배포 → 배포 관리 에 나오는 "웹 앱" URL (…/exec)</div>
           </div>
         )}
 
@@ -76,6 +77,12 @@ const LoginScreen = ({ onLoggedIn }) => {
           <label>비밀번호</label>
           <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password"/>
         </div>
+
+        {!showUrl && (
+          <div style={{marginTop:10,fontSize:11.5,color:'var(--ink-4)',textAlign:'right'}}>
+            <a href="#" onClick={e => { e.preventDefault(); setShowUrl(true); }} style={{color:'inherit'}}>서버 주소 변경</a>
+          </div>
+        )}
 
         {error && (
           <div style={{marginTop:14,padding:'10px 12px',borderRadius:8,background:'var(--danger-soft)',color:'var(--danger)',fontSize:12.5,whiteSpace:'pre-wrap'}}>
