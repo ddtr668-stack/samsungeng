@@ -67,7 +67,7 @@ const ScreenReports = ({ data: allData, viewManager, onManagerChange }) => {
           <div className="page-sub">부문별·기간별 실적 분석 · 데이터 기간 <b>{period}</b> · 총 <b>{data.contracts.length}건</b></div>
         </div>
         <div className="hstack">
-          {managers.length > 0 && (
+          {managers.length > 0 && typeof isAdmin === 'function' && isAdmin() && (
             <select className="filter-select no-print" value={selManager} onChange={e => pickManager(e.target.value)}
               title="담당자별 리포트" style={{height:36,fontSize:13,fontWeight:600}}>
               <option value="all">담당자 · 전체</option>
