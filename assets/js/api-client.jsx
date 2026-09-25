@@ -70,17 +70,26 @@ const SYNCED_SETTINGS = {
   driveApiKey: 'hb.gdrive.apiKey',
   driveClientId: 'hb.gdrive.clientId',
 };
+// 관리자가 [삭제]로 지운 값 표시 (빈 값과 구분 → 모든 브라우저에서 지움)
+const SETTING_CLEARED = '__cleared__';
+// 서버 → 브라우저: 서버에 값이 있으면 그 값으로, [삭제]된 값이면 지움.
+// 서버가 비어 있는데 이 브라우저에 저장된 값이 있으면 지우지 않고 서버를 다시 채움 (마지막 저장값 유지)
 function applyServerSettings(settings) {
   if (!settings) return;
+  const heal = [];
   Object.entries(SYNCED_SETTINGS).forEach(([field, key]) => {
-    if (!Object.prototype.hasOwnProperty.call(settings, field)) return;
-    const v = (settings[field] || '').trim();
-    if (v) localStorage.setItem(key, v); else localStorage.removeItem(key);
+    const v = String(settings[field] || '').trim();
+    if (v === SETTING_CLEARED) { localStorage.removeItem(key); return; }
+    if (v) { localStorage.setItem(key, v); return; }
+    if (localStorage.getItem(key)) heal.push(field);
   });
+  if (heal.length && isLoggedIn()) pushAppSettings(heal).catch(() => {});
 }
-async function pushAppSettings() {
+// 브라우저 → 서버: 지정한 항목만 보냄 (다른 항목을 빈 값으로 덮어쓰지 않도록)
+async function pushAppSettings(fields) {
+  const list = fields && fields.length ? fields : Object.keys(SYNCED_SETTINGS);
   const settings = {};
-  Object.entries(SYNCED_SETTINGS).forEach(([field, key]) => { settings[field] = localStorage.getItem(key) || ''; });
+  list.forEach(field => { settings[field] = localStorage.getItem(SYNCED_SETTINGS[field]) || SETTING_CLEARED; });
   return apiFetch('saveAppSettings', { method:'POST', body:{ settings } });
 }
 
