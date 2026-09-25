@@ -9,7 +9,7 @@
 //      · 다음 사용자로 실행: 나
 //      · 액세스 권한: 모든 사용자 (로그인은 대시보드 관리자 계정으로 확인)
 //   3. 배포 URL 을 저장소의 assets/config.js 의 apiUrl 에 넣습니다.
-//      (Auth.gs 도 같은 프로젝트에 추가하고 setAdminPassword 를 한 번 실행)
+//      (Auth.gs 도 같은 프로젝트에 추가하고 SG_setAdminPassword 를 한 번 실행)
 //   4. 새 시트 컬럼이나 로직이 바뀌면 "새 버전 배포"로 재배포합니다.
 //
 // 이 파일은 기존 Code.gs / BusinessTools.gs / ExpenseRequest.gs 에
@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-25-01 (로그인 · 공용 설정 저장)';
+var BUILD_VERSION_ = '2026-09-25-02 (로그인 · 이름 충돌 방지 SG_)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -70,19 +70,19 @@ function handleRequest_(e, method) {
 
     // ─── 로그인 확인 (Auth.gs) ───
     var token = params.token || payload.token || '';
-    if (route === 'login')  return apiLogin_(payload);
-    if (route === 'logout') return apiLogout_(token);
+    if (route === 'login')  return SG_apiLogin_(payload);
+    if (route === 'logout') return SG_apiLogout_(token);
     var session = null;
     if (route !== 'ping') {
-      session = getSession_(token);
+      session = SG_getSession_(token);
       if (!session) return errorOut_('로그인이 필요합니다.', 'AUTH_REQUIRED');
     }
 
     switch (route) {
       case 'me':            return jsonOut_({ ok:true, user:{ id: session.id, role:'admin' } });
-      case 'appSettings':   return apiGetAppSettings_();
-      case 'saveAppSettings': return apiSaveAppSettings_(payload);
-      case 'changePassword':  return apiChangePassword_(payload, session);
+      case 'appSettings':   return SG_apiGetAppSettings_();
+      case 'saveAppSettings': return SG_apiSaveAppSettings_(payload);
+      case 'changePassword':  return SG_apiChangePassword_(payload, session);
       case 'ping':          return jsonOut_({ ok:true, message:'pong', ts:new Date().toISOString(), version: BUILD_VERSION_ });
       case 'bootstrap':     return apiBootstrap_();
       case 'contracts':     return apiListContracts_();
