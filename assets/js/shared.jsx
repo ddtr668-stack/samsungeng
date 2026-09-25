@@ -278,7 +278,7 @@ const Sidebar = ({ current, onNav, counts, onLogout, managers, activeManager, on
 };
 
 // ─── Topbar ───
-const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefresh, viewManager, onClearManager }) => {
+const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, addLabel, source, onRefresh, viewManager, onClearManager }) => {
   const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (!onRefresh || refreshing) return;
@@ -402,7 +402,7 @@ const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefres
       {(typeof canEdit !== 'function' || canEdit()) && (
         <button className="btn-primary" onClick={onAddContract}>
           <Icon name="plus" size={14} stroke={2.2}/>
-          신규 계약
+          {addLabel || '신규 계약'}
         </button>
       )}
     </div>
