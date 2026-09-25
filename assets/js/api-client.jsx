@@ -169,7 +169,13 @@ async function loadInitialData() {
     return { data: { ...data, _source: 'static' }, source: 'static', errors };
   } catch (e) {
     errors.push('정적 데이터 로드 실패: ' + e.message);
-    return { data: null, source: null, errors };
+    // 정적 JSON 없이 배포된 경우(공개 저장소): 빈 데이터로 앱을 띄우고 설정 화면으로 안내
+    const empty = {
+      meta: {}, summary: { totalAmount: 0, paidAmount: 0, balance: 0, profit: 0, statusCounts: {} },
+      contracts: [], clients: [], clientStats: [], categoryStats: [],
+      monthlyStats: [], topBalance: [], expenseHistory: [],
+    };
+    return { data: { ...empty, _source: 'empty' }, source: 'empty', errors };
   }
 }
 

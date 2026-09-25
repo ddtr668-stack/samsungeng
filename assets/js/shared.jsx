@@ -223,7 +223,7 @@ const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefres
       {source && (
         <span className={`source-badge ${source}`} style={{marginLeft:8}}>
           <span className="b-dot"></span>
-          {source === 'api' ? '실시간 연동' : source === 'cache' ? '캐시 (오프라인)' : '샘플 데이터'}
+          {source === 'api' ? '실시간 연동' : source === 'cache' ? '캐시 (오프라인)' : source === 'empty' ? '미연결' : '샘플 데이터'}
         </span>
       )}
 
