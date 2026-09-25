@@ -256,12 +256,13 @@ const KpiCard = ({
             {fmtKRW(value)}<span className="unit" style={{color:valColor||'var(--ink-3)'}}>원</span>
           </div>
           <div style={{fontSize:10.5,color:'var(--ink-3)',marginTop:5,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sub}</div>
+          <div className="no-print" style={{position:'absolute',top:8,right:8,display:'flex',gap:4,alignItems:'center'}}>
           {!readOnly && field && (
             <button
               onClick={() => onEdit(field)}
               title="값 편집"
               className="no-print"
-              style={{position:'absolute',top:8,right: extraAction ? 34 : 8,width:22,height:22,padding:0,border:'1px solid var(--line)',borderRadius:5,background:'#fff',cursor:'pointer',display:'grid',placeItems:'center',color:'var(--ink-3)',opacity:0.6,transition:'opacity .15s'}}
+              style={{width:22,height:22,padding:0,border:'1px solid var(--line)',borderRadius:5,background:'#fff',cursor:'pointer',display:'grid',placeItems:'center',color:'var(--ink-3)',opacity:0.6,transition:'opacity .15s'}}
               onMouseEnter={e => e.currentTarget.style.opacity=1}
               onMouseLeave={e => e.currentTarget.style.opacity=0.6}
             >
@@ -271,18 +272,22 @@ const KpiCard = ({
           {extraAction && (
             <button
               onClick={extraAction.onClick}
+              disabled={extraAction.disabled}
               title={extraAction.title || extraAction.label}
               className="no-print"
               style={{
-                position:'absolute',top:8,right:8,
+                height:22,
                 padding:'2px 8px',fontSize:10,fontWeight:700,
                 border:'1px solid var(--pos, #22A96A)', borderRadius:5,
-                background:'var(--pos, #22A96A)', color:'#fff', cursor:'pointer',
+                background: extraAction.variant === 'done' ? 'var(--pos-soft, #E6F3EC)' : 'var(--pos, #22A96A)',
+                color: extraAction.variant === 'done' ? 'var(--pos, #22A96A)' : '#fff',
+                cursor: extraAction.disabled ? 'wait' : 'pointer',
                 display:'inline-flex', alignItems:'center', gap:3,
               }}>
               {extraAction.icon}{extraAction.label}
             </button>
           )}
+          </div>
         </>
       )}
     </div>
@@ -413,6 +418,37 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
   const handleBack = () => {
     if (checksDirty && !window.confirm('공사 진행 단계 변경이 저장되지 않았습니다. 저장하지 않고 나갈까요?')) return;
     onBack?.();
+  };
+
+  // ─── 설치비(도급비) 지급완료 ───
+  const subRemain = Math.max(0, (c.subcontractAmount || 0) - (c.subcontractPaid || 0));
+  const subPaidDone = c.subcontractAmount > 0 && subRemain === 0;
+  const saveSubcontractPaid = async (amount, okMsg) => {
+    setSaving(true);
+    try {
+      await apiClient.updateContract(baseContract.no, { subcontractPaid: amount });
+      toast?.(okMsg, 'success');
+      await onUpdated?.();
+    } catch (e) {
+      toast?.('저장 실패: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const markSubcontractPaid = () => {
+    if (saving) return;
+    const msg = `도급비 ${fmtKRW(c.subcontractAmount)}원을 전액 지급완료로 처리할까요?`
+      + `\n(지급액 ${fmtKRW(c.subcontractPaid || 0)}원 → ${fmtKRW(c.subcontractAmount)}원, 잔액 0원)`;
+    if (!window.confirm(msg)) return;
+    saveSubcontractPaid(c.subcontractAmount, '설치비(도급비) 지급완료 처리했습니다');
+  };
+  const undoSubcontractPaid = () => {
+    if (saving) return;
+    const v = window.prompt(`지급완료를 취소합니다.\n실제 지급한 금액을 입력하세요 (원, 도급비 ${fmtKRW(c.subcontractAmount)}원)`, '0');
+    if (v == null) return;
+    const amount = Number(String(v).replace(/[^0-9]/g, '')) || 0;
+    if (amount >= c.subcontractAmount) { toast?.('도급비보다 적은 금액을 입력하세요', 'error'); return; }
+    saveSubcontractPaid(amount, `지급액을 ${fmtKRW(amount)}원으로 변경했습니다`);
   };
 
   // 해당 거래처의 다른 계약
@@ -758,9 +794,21 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
         <KpiCard
           field="subcontractAmount" label="설치비 (도급비)" dotColor="#8f6d3a"
           value={c.subcontractAmount}
-          sub={c.subcontractor ? `→ ${c.subcontractor}` : '직시공'}
+          sub={[
+            c.subcontractor ? `→ ${c.subcontractor}` : '직시공',
+            c.subcontractAmount > 0 && (subPaidDone ? '지급완료' : `지급 ${fmtKRW(c.subcontractPaid || 0)} · 잔액 ${fmtKRW(subRemain)}`),
+          ].filter(Boolean).join(' · ')}
           inlineField={inlineField} inlineValue={inlineValue} setInlineValue={setInlineValue}
           onEdit={startInlineEdit} onSave={saveInlineEdit} onCancel={cancelInlineEdit} saving={saving}
+          extraAction={c.subcontractAmount > 0 && (typeof canEdit !== 'function' || canEdit()) ? (subPaidDone ? {
+            label: '✓ 지급완료', variant: 'done', disabled: saving,
+            title: '지급완료 처리됨 · 누르면 지급액을 다시 입력할 수 있습니다',
+            onClick: undoSubcontractPaid,
+          } : {
+            label: '지급완료', disabled: saving,
+            title: '도급비 전액을 지급완료로 처리 (지출·기성 관리에 정산완료로 표시)',
+            onClick: markSubcontractPaid,
+          }) : null}
         />
         <KpiCard
           field="salesCost" label="영업 수수료" dotColor="#8f6d3a"
