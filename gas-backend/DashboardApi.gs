@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-25-04 (담당자별 계약번호)';
+var BUILD_VERSION_ = '2026-09-25-05 (공사 진행 날짜)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -136,7 +136,7 @@ function handleRequest_(e, method) {
 // ============================================================
 
 function apiBootstrap_(user) {
-  var contracts = SG_applyManagers_(readContracts_(), user);
+  var contracts = applyCheckDates_(SG_applyManagers_(readContracts_(), user));
   var clients = readClients_();
   var subcontractors = readSubcontractors_();
   var expenseHistory = readExpenseHistory_();
@@ -180,7 +180,7 @@ function apiListContracts_(user) {
 function apiGetContract_(no, user) {
   no = Number(no);
   if (!no) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
-  var contracts = SG_applyManagers_(readContracts_(), user);
+  var contracts = applyCheckDates_(SG_applyManagers_(readContracts_(), user));
   var found = null;
   for (var i = 0; i < contracts.length; i++) {
     if (Number(contracts[i].no) === no) { found = contracts[i]; break; }
@@ -227,9 +227,89 @@ function apiUpdateContract_(payload) {
   var no = Number(payload.no);
   var patch = payload.patch || {};
   if (!no) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
-  var result = applyContractPatch_(no, patch);
-  if (!result.ok) return errorOut_(result.error, result.code || 'ERROR');
+  var result = { ok: true, updated: [] };
+  if (Object.keys(patch).length) {
+    result = applyContractPatch_(no, patch);
+    if (!result.ok) return errorOut_(result.error, result.code || 'ERROR');
+  }
+  // 공사 진행 단계 날짜 (완료로 바꾼 단계는 지정 날짜 또는 오늘, 해제한 단계는 날짜 삭제)
+  if (payload.checkDates || CHECK_STEPS_.some(function (k) { return ('chk' + k) in patch; })) {
+    result.checkDates = saveCheckDates_(no, patch, payload.checkDates || {});
+  }
   return jsonOut_(result);
+}
+
+// ============================================================
+// 공사 진행 단계별 날짜 ("공사진행일자" 시트: 계약번호 · 배관 · 실내기 · 실외기 · 시운전 · 인수인계)
+// ============================================================
+var CHECK_STEPS_ = ['배관', '실내기', '실외기', '시운전', '인수인계'];
+var CHECK_DATE_SHEET_ = '공사진행일자';
+
+function getCheckDateSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(CHECK_DATE_SHEET_);
+  if (!sh) {
+    sh = ss.insertSheet(CHECK_DATE_SHEET_);
+    sh.getRange(1, 1, 1, 6).setValues([['계약번호'].concat(CHECK_STEPS_)]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function fmtCheckDate_(v) {
+  if (v instanceof Date && !isNaN(v.getTime())) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var t = String(v || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : '';
+}
+
+// { 계약번호: { 배관:'2026-09-25', ... } }
+function readCheckDates_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(CHECK_DATE_SHEET_);
+  var map = {};
+  if (!sh || sh.getLastRow() < 2) return map;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues().forEach(function (r) {
+    var no = Number(r[0]);
+    if (!no || map[no]) return;
+    var d = {};
+    CHECK_STEPS_.forEach(function (k, i) { var v = fmtCheckDate_(r[i + 1]); if (v) d[k] = v; });
+    map[no] = d;
+  });
+  return map;
+}
+
+function saveCheckDates_(no, patch, dates) {
+  var sh = getCheckDateSheet_();
+  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var rowIdx = -1, current = {};
+  var last = sh.getLastRow();
+  if (last >= 2) {
+    var vals = sh.getRange(2, 1, last - 1, 6).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      if (Number(vals[i][0]) === no) {
+        rowIdx = i + 2;
+        CHECK_STEPS_.forEach(function (k, j) { var v = fmtCheckDate_(vals[i][j + 1]); if (v) current[k] = v; });
+        break;
+      }
+    }
+  }
+  CHECK_STEPS_.forEach(function (k) {
+    var chk = patch['chk' + k];
+    var picked = fmtCheckDate_(dates[k]);
+    if (chk === false) delete current[k];                 // 해제 → 날짜 삭제
+    else if (chk === true) current[k] = picked || today;  // 완료 → 선택한 날짜, 없으면 오늘(저장한 날)
+    else if (picked) current[k] = picked;                 // 이미 완료된 단계의 날짜만 변경
+  });
+  var row = [no].concat(CHECK_STEPS_.map(function (k) { return current[k] || ''; }));
+  if (rowIdx > 0) sh.getRange(rowIdx, 1, 1, 6).setValues([row]);
+  else sh.appendRow(row);
+  return current;
+}
+
+function applyCheckDates_(contracts) {
+  var map = readCheckDates_();
+  contracts.forEach(function (c) { c.checkDates = map[Number(c.no)] || {}; });
+  return contracts;
 }
 
 // 계약 한 행에 patch 를 적용하는 실제 로직 (apiUpdateContract_ 와 지출품의서 연동

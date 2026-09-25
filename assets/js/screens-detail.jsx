@@ -256,12 +256,13 @@ const KpiCard = ({
             {fmtKRW(value)}<span className="unit" style={{color:valColor||'var(--ink-3)'}}>원</span>
           </div>
           <div style={{fontSize:10.5,color:'var(--ink-3)',marginTop:5,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sub}</div>
+          <div className="no-print" style={{position:'absolute',top:8,right:8,display:'flex',gap:4,alignItems:'center'}}>
           {!readOnly && field && (
             <button
               onClick={() => onEdit(field)}
               title="값 편집"
               className="no-print"
-              style={{position:'absolute',top:8,right: extraAction ? 34 : 8,width:22,height:22,padding:0,border:'1px solid var(--line)',borderRadius:5,background:'#fff',cursor:'pointer',display:'grid',placeItems:'center',color:'var(--ink-3)',opacity:0.6,transition:'opacity .15s'}}
+              style={{width:22,height:22,padding:0,border:'1px solid var(--line)',borderRadius:5,background:'#fff',cursor:'pointer',display:'grid',placeItems:'center',color:'var(--ink-3)',opacity:0.6,transition:'opacity .15s'}}
               onMouseEnter={e => e.currentTarget.style.opacity=1}
               onMouseLeave={e => e.currentTarget.style.opacity=0.6}
             >
@@ -271,18 +272,22 @@ const KpiCard = ({
           {extraAction && (
             <button
               onClick={extraAction.onClick}
+              disabled={extraAction.disabled}
               title={extraAction.title || extraAction.label}
               className="no-print"
               style={{
-                position:'absolute',top:8,right:8,
+                height:22,
                 padding:'2px 8px',fontSize:10,fontWeight:700,
                 border:'1px solid var(--pos, #22A96A)', borderRadius:5,
-                background:'var(--pos, #22A96A)', color:'#fff', cursor:'pointer',
+                background: extraAction.variant === 'done' ? 'var(--pos-soft, #E6F3EC)' : 'var(--pos, #22A96A)',
+                color: extraAction.variant === 'done' ? 'var(--pos, #22A96A)' : '#fff',
+                cursor: extraAction.disabled ? 'wait' : 'pointer',
                 display:'inline-flex', alignItems:'center', gap:3,
               }}>
               {extraAction.icon}{extraAction.label}
             </button>
           )}
+          </div>
         </>
       )}
     </div>
@@ -329,13 +334,16 @@ const ManagerField = ({ contract, onUpdated }) => {
   );
 };
 
-const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) => {
+const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated, onSelectContract }) => {
   // contractNo는 실제로는 계약의 고유 id (중복 no 대응)
   const baseContract = data.contracts.find(x => (x.id ?? x.no) === contractNo);
   const toast = window.useToast ? window.useToast() : null;
 
   // 로컬 체크박스 오버라이드 (즉시 반응용)
   const [localChecks, setLocalChecks] = useState(null);
+  const [localDates, setLocalDates] = useState({});   // 단계별로 고른 날짜 (저장 전)
+  // 다른 계약으로 이동하면 저장 안 된 단계 선택·날짜 초기화
+  useEffect(() => { setLocalChecks(null); setLocalDates({}); }, [contractNo]);
   const [saving, setSaving] = useState(false);
 
   // 편집 모드
@@ -386,23 +394,33 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
 
   // 단계 선택: 화면에서만 바꾸고, [저장] 을 눌러야 한 번에 저장
   const checksEditable = typeof canEdit !== 'function' || canEdit();
+  const savedDates = baseContract.checkDates || {};
   const changedKeys = CHECK_KEYS.filter(k => !!checks[k] !== !!(baseContract.checks || {})[k]);
-  const checksDirty = changedKeys.length > 0;
+  // 이미 완료된 단계에서 날짜만 바꾼 경우
+  const dateChangedKeys = CHECK_KEYS.filter(k => checks[k] && !changedKeys.includes(k) && localDates[k] && localDates[k] !== savedDates[k]);
+  const pendingCount = changedKeys.length + dateChangedKeys.length;
+  const checksDirty = pendingCount > 0;
+  const todayStr = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
   const toggleCheck = (key) => {
     if (!checksEditable) { toast?.('조회 권한만 있습니다', 'error'); return; }
     setLocalChecks({ ...checks, [key]: !checks[key] });
   };
-  const cancelChecks = () => setLocalChecks(null);
+  const cancelChecks = () => { setLocalChecks(null); setLocalDates({}); };
   const saveChecks = async () => {
     if (!checksDirty || saving) return;
     const patch = {};
     changedKeys.forEach(k => { patch['chk' + k] = !!checks[k]; });
+    // 날짜: 고른 날짜, 안 고르면 저장하는 날(오늘)
+    const checkDates = {};
+    changedKeys.forEach(k => { if (checks[k]) checkDates[k] = localDates[k] || todayStr; });
+    dateChangedKeys.forEach(k => { checkDates[k] = localDates[k]; });
     setSaving(true);
     try {
-      await apiClient.updateContract(baseContract.no, patch);
-      toast?.(`공사 진행 ${changedKeys.length}개 단계 저장 완료`, 'success');
+      await apiClient.updateContract(baseContract.no, patch, checkDates);
+      toast?.(`공사 진행 ${pendingCount}건 저장 완료`, 'success');
       await onUpdated?.();
       setLocalChecks(null);
+      setLocalDates({});
     } catch (e) {
       toast?.('저장 실패: ' + e.message, 'error');
     } finally {
@@ -415,8 +433,45 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
     onBack?.();
   };
 
+  // ─── 설치비(도급비) 지급완료 ───
+  const subRemain = Math.max(0, (c.subcontractAmount || 0) - (c.subcontractPaid || 0));
+  const subPaidDone = c.subcontractAmount > 0 && subRemain === 0;
+  const saveSubcontractPaid = async (amount, okMsg) => {
+    setSaving(true);
+    try {
+      await apiClient.updateContract(baseContract.no, { subcontractPaid: amount });
+      toast?.(okMsg, 'success');
+      await onUpdated?.();
+    } catch (e) {
+      toast?.('저장 실패: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const markSubcontractPaid = () => {
+    if (saving) return;
+    const msg = `도급비 ${fmtKRW(c.subcontractAmount)}원을 전액 지급완료로 처리할까요?`
+      + `\n(지급액 ${fmtKRW(c.subcontractPaid || 0)}원 → ${fmtKRW(c.subcontractAmount)}원, 잔액 0원)`;
+    if (!window.confirm(msg)) return;
+    saveSubcontractPaid(c.subcontractAmount, '설치비(도급비) 지급완료 처리했습니다');
+  };
+  const undoSubcontractPaid = () => {
+    if (saving) return;
+    const v = window.prompt(`지급완료를 취소합니다.\n실제 지급한 금액을 입력하세요 (원, 도급비 ${fmtKRW(c.subcontractAmount)}원)`, '0');
+    if (v == null) return;
+    const amount = Number(String(v).replace(/[^0-9]/g, '')) || 0;
+    if (amount >= c.subcontractAmount) { toast?.('도급비보다 적은 금액을 입력하세요', 'error'); return; }
+    saveSubcontractPaid(amount, `지급액을 ${fmtKRW(amount)}원으로 변경했습니다`);
+  };
+
   // 해당 거래처의 다른 계약
   const otherByClient = data.contracts.filter(x => x.client === c.client && (x.id ?? x.no) !== (c.id ?? c.no)).slice(0, 4);
+
+  // 같은 거래처의 다른 계약으로 이동 (저장 안 된 공사 진행 변경이 있으면 확인)
+  const openOtherContract = (o) => {
+    if (checksDirty && !window.confirm('공사 진행 단계 변경이 저장되지 않았습니다. 저장하지 않고 이동할까요?')) return;
+    onSelectContract?.(o.id ?? o.no);
+  };
 
   // ─── 출력 (인쇄) ───
   const handlePrint = () => window.print();
@@ -758,9 +813,21 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
         <KpiCard
           field="subcontractAmount" label="설치비 (도급비)" dotColor="#8f6d3a"
           value={c.subcontractAmount}
-          sub={c.subcontractor ? `→ ${c.subcontractor}` : '직시공'}
+          sub={[
+            c.subcontractor ? `→ ${c.subcontractor}` : '직시공',
+            c.subcontractAmount > 0 && (subPaidDone ? '지급완료' : `지급 ${fmtKRW(c.subcontractPaid || 0)} · 잔액 ${fmtKRW(subRemain)}`),
+          ].filter(Boolean).join(' · ')}
           inlineField={inlineField} inlineValue={inlineValue} setInlineValue={setInlineValue}
           onEdit={startInlineEdit} onSave={saveInlineEdit} onCancel={cancelInlineEdit} saving={saving}
+          extraAction={c.subcontractAmount > 0 && (typeof canEdit !== 'function' || canEdit()) ? (subPaidDone ? {
+            label: '✓ 지급완료', variant: 'done', disabled: saving,
+            title: '지급완료 처리됨 · 누르면 지급액을 다시 입력할 수 있습니다',
+            onClick: undoSubcontractPaid,
+          } : {
+            label: '지급완료', disabled: saving,
+            title: '도급비 전액을 지급완료로 처리 (지출·기성 관리에 정산완료로 표시)',
+            onClick: markSubcontractPaid,
+          }) : null}
         />
         <KpiCard
           field="salesCost" label="영업 수수료" dotColor="#8f6d3a"
@@ -787,12 +854,12 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
               {saving && <span style={{fontSize:11,fontWeight:500,color:'var(--ink-3)'}}>· 저장 중…</span>}
             </div>
             <div style={{fontSize:11,color:'var(--ink-3)',marginTop:2}}>
-              단계를 모두 선택한 뒤 저장 · <b style={{color:'var(--ink-2)'}}>{doneCount}/5</b> 완료
+              단계를 모두 선택한 뒤 저장 · 날짜를 안 고르면 저장한 날로 기록 · <b style={{color:'var(--ink-2)'}}>{doneCount}/5</b> 완료
             </div>
           </div>
           {checksDirty && (
             <div className="no-print" style={{display:'flex',alignItems:'center',gap:8,marginLeft:'auto',marginRight:16}}>
-              <span style={{fontSize:11.5,color:'var(--warn, #9A6A1E)',fontWeight:600}}>저장 안 된 변경 {changedKeys.length}건</span>
+              <span style={{fontSize:11.5,color:'var(--warn, #9A6A1E)',fontWeight:600}}>저장 안 된 변경 {pendingCount}건</span>
               <button type="button" className="btn-ghost" onClick={cancelChecks} disabled={saving} style={{height:32,fontSize:12,padding:'0 12px'}}>취소</button>
               <button type="button" className="btn-primary" onClick={saveChecks} disabled={saving} style={{height:32,fontSize:12,padding:'0 14px'}}>
                 <Icon name="check" size={13} stroke={2.4}/>
@@ -809,9 +876,10 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
         <div className="checks">
           {CHECK_KEYS.map(k => {
             const done = c.checks[k];
+            const dateVal = localDates[k] || (changedKeys.includes(k) ? '' : (savedDates[k] || ''));
             return (
+              <div key={k} style={{display:'flex',flexDirection:'column',gap:4,minWidth:0}}>
               <button
-                key={k}
                 type="button"
                 onClick={() => toggleCheck(k)}
                 disabled={saving}
@@ -830,6 +898,17 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
                 <div className="cbox">{done ? <Icon name="check" size={16} stroke={2.6}/> : ''}</div>
                 <div className="clabel">{k}</div>
               </button>
+              {done ? (
+                <input type="date" value={dateVal} max="2100-12-31"
+                  disabled={saving || !checksEditable}
+                  onChange={e => setLocalDates(d => ({ ...d, [k]: e.target.value }))}
+                  title={dateVal ? `${k} 완료일` : '비워두면 저장한 날짜로 기록됩니다'}
+                  aria-label={`${k} 완료일`}
+                  style={{width:'100%',minWidth:0,boxSizing:'border-box',padding:'4px 6px',fontSize:11.5,border:'1px solid ' + (localDates[k] && localDates[k] !== savedDates[k] ? 'var(--green-600)' : 'var(--line)'),borderRadius:6,background:'#fff',color: dateVal ? 'var(--ink-2)' : 'var(--ink-4)'}}/>
+              ) : (
+                <div style={{height:27}}/>
+              )}
+              </div>
             );
           })}
         </div>
@@ -850,19 +929,19 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
           </div>
           <div className={`tlh-item ${c.checks.배관 ? 'done' : c.progress > 0 ? 'now' : ''}`}>
             <div className="tlh-dot"></div>
-            <div className="tlh-date">착공</div>
+            <div className="tlh-date">{savedDates.배관 ? `착공 · ${fmtDate(savedDates.배관)}` : '착공'}</div>
             <div className="tlh-title">배관·실내기·실외기</div>
             <div className="tlh-desc">{Object.entries(c.checks).slice(0,3).filter(([k,v])=>v).map(([k])=>k).join('·') || '진행 전'}</div>
           </div>
           <div className={`tlh-item ${c.checks.시운전 ? 'done' : c.checks.실외기 ? 'now' : ''}`}>
             <div className="tlh-dot"></div>
-            <div className="tlh-date">시운전</div>
+            <div className="tlh-date">{savedDates.시운전 ? `시운전 · ${fmtDate(savedDates.시운전)}` : '시운전'}</div>
             <div className="tlh-title">시운전 및 검수</div>
             <div className="tlh-desc">{c.checks.시운전 ? '검수 완료' : '대기'}</div>
           </div>
           <div className={`tlh-item ${c.checks.인수인계 ? 'done' : c.checks.시운전 ? 'now' : ''}`}>
             <div className="tlh-dot"></div>
-            <div className="tlh-date">준공</div>
+            <div className="tlh-date">{savedDates.인수인계 ? `준공 · ${fmtDate(savedDates.인수인계)}` : '준공'}</div>
             <div className="tlh-title">인수인계</div>
             <div className="tlh-desc">{c.checks.인수인계 ? '완료' : '완료 전'}</div>
           </div>
@@ -1058,7 +1137,14 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
               <CardHead title={`${c.client}의 다른 계약`} sub={`총 ${otherByClient.length + 1}건 진행 이력`}/>
               <div style={{display:'flex',flexDirection:'column',gap:8}}>
                 {otherByClient.map(o => (
-                  <div key={o.id ?? o.no} style={{padding:'10px 12px',border:'1px solid var(--line)',borderRadius:9,fontSize:12.5}}>
+                  <div key={o.id ?? o.no}
+                    role="button" tabIndex={0}
+                    title="이 계약으로 이동"
+                    onClick={() => openOtherContract(o)}
+                    onKeyDown={e => { if (e.key === 'Enter') openOtherContract(o); }}
+                    style={{padding:'10px 12px',border:'1px solid var(--line)',borderRadius:9,fontSize:12.5,cursor:'pointer',transition:'border-color .15s, box-shadow .15s'}}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--green-600)'; e.currentTarget.style.boxShadow = '0 3px 8px rgba(20,25,20,.08)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.boxShadow = ''; }}>
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
                       <span style={{fontSize:11,color:'var(--ink-4)',fontWeight:600,whiteSpace:'nowrap'}}>{contractCode(o)}</span>
                       <CatTag cat={o.category}/>

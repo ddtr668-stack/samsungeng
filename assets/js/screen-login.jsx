@@ -66,7 +66,7 @@ const LoginScreen = ({ onLoggedIn }) => {
       let ver = '';
       try { const r = await apiClient.ping(); ver = r.version || '버전 정보 없음 (구버전 코드)'; }
       catch (e2) { ver = '확인 실패: ' + e2.message; }
-      setError(msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: 2026-09-25-04)');
+      setError(msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: 2026-09-25-05)');
     } finally {
       setBusy(false);
     }
