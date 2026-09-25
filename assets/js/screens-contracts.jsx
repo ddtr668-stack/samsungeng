@@ -6,6 +6,8 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
   const [search, setSearch] = useState(initialSearch);
   const [category, setCategory] = useState('all');
   const [status, setStatus] = useState('all');
+  const [manager, setManager] = useState('all');
+  const managers = useMemo(() => [...new Set(data.contracts.map(c => c.manager).filter(Boolean))].sort(), [data]);
   const [year, setYear] = useState('all');
   const [month, setMonth] = useState('all');
   const [sortKey, setSortKey] = useState('no');
@@ -41,16 +43,17 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
     return data.contracts.filter(c => {
       if (category !== 'all' && c.category !== category) return false;
       if (status !== 'all' && c.status !== status) return false;
+      if (manager !== 'all' && c.manager !== manager) return false;
       if (year !== 'all' && (!c.contractDate || !c.contractDate.startsWith(year))) return false;
       if (month !== 'all' && (!c.contractDate || c.contractDate.substring(5,7) !== month)) return false;
       if (search) {
         const q = search.toLowerCase();
-        const hay = `${c.no} ${c.projectName} ${c.client} ${c.category} ${c.subcontractor||''}`.toLowerCase();
+        const hay = `${c.no} ${c.projectName} ${c.client} ${c.category} ${c.subcontractor||''} ${c.manager||''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [data, search, category, status, year, month, monthsInYear]);
+  }, [data, search, category, status, year, month, monthsInYear, manager]);
 
   // Sort
   const sorted = useMemo(() => {
@@ -124,6 +127,13 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
             <option value="미진행">미진행</option>
           </select>
 
+          {managers.length > 1 && (
+            <select className="filter-select" value={manager} onChange={e => setManager(e.target.value)}>
+              <option value="all">담당자 · 전체</option>
+              {managers.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          )}
+
           <select className="filter-select" value={year} onChange={e => setYear(e.target.value)}>
             <option value="all">연도 · 전체</option>
             {years.map(y => <option key={y} value={y}>{y}년</option>)}
@@ -165,6 +175,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
                 </th>
                 <th style={{width:92}}>구분</th>
                 <th style={{width:140}}>거래처</th>
+                <th style={{width:76}}>담당자</th>
                 <th>프로젝트명</th>
                 <th className="right sortable" onClick={() => toggleSort('totalAmount')} style={{width:120}}>
                   계약금 <span className="sarr">{sortKey==='totalAmount' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
@@ -180,7 +191,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
             </thead>
             <tbody>
               {paged.length === 0 && (
-                <tr><td colSpan="9" className="empty">
+                <tr><td colSpan="10" className="empty">
                   <Icon name="search" size={32} stroke={1.4}/>
                   <div>검색 조건에 맞는 계약이 없습니다.</div>
                 </td></tr>
@@ -191,6 +202,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
                   <td className="num tnum">{fmtMonthShort(c.contractDate)}</td>
                   <td><CatTag cat={c.category}/></td>
                   <td style={{fontSize:12.5,color:'var(--ink-2)',fontWeight:500,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.client}</td>
+                  <td style={{fontSize:12.5,color:'var(--ink-2)',whiteSpace:'nowrap'}}>{c.manager || '—'}</td>
                   <td className="proj-cell">
                     <div className="p-name">{c.projectName || <span className="muted">(제목 없음)</span>}</div>
                     {c.subcontractor && <div className="p-client">도급 · {c.subcontractor}</div>}

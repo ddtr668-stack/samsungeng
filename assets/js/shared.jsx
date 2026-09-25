@@ -145,16 +145,22 @@ const Sidebar = ({ current, onNav, counts, onLogout }) => {
 
       <div className="side-foot">
         <div className="me">
-          <div className="avatar">이</div>
-          <div>
-            <div className="who">이상규 이사</div>
-            <div className="role">주식회사 삼성이엔지</div>
-          </div>
+          {(() => {
+            const u = (typeof getAuthUser === 'function' && getAuthUser()) || {};
+            const nm = u.name || '이상규';
+            return (<>
+              <div className="avatar">{nm.slice(0, 1)}</div>
+              <div>
+                <div className="who">{nm}{u.roleLabel ? <span style={{fontSize:10.5,fontWeight:500,opacity:.7,marginLeft:5}}>{u.roleLabel}</span> : null}</div>
+                <div className="role">{u.dept || '주식회사 삼성이엔지'}</div>
+              </div>
+            </>);
+          })()}
         </div>
         {onLogout && (
           <button type="button" onClick={onLogout}
             style={{marginTop:10,width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid rgba(110,115,105,.35)',background:'transparent',color:'inherit',fontSize:12,cursor:'pointer',opacity:.85}}>
-            로그아웃{typeof getAuthUser === 'function' && getAuthUser() ? ` (${getAuthUser().id})` : ''}
+            로그아웃
           </button>
         )}
       </div>
@@ -277,10 +283,12 @@ const Topbar = ({ crumbs, onSearch, searchValue, onAddContract, source, onRefres
           </div>
         )}
       </div>
-      <button className="btn-primary" onClick={onAddContract}>
-        <Icon name="plus" size={14} stroke={2.2}/>
-        신규 계약
-      </button>
+      {(typeof canEdit !== 'function' || canEdit()) && (
+        <button className="btn-primary" onClick={onAddContract}>
+          <Icon name="plus" size={14} stroke={2.2}/>
+          신규 계약
+        </button>
+      )}
     </div>
   );
 };

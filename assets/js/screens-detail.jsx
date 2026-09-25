@@ -289,6 +289,46 @@ const KpiCard = ({
   );
 };
 
+// ─── 계약 담당자 (관리자는 변경 가능) ───
+const ManagerField = ({ contract, onUpdated }) => {
+  const toast = window.useToast ? window.useToast() : null;
+  const admin = typeof isAdmin === 'function' && isAdmin();
+  const [users, setUsers] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!admin) return;
+    apiClient.listUsers().then(r => setUsers((r.users || []).filter(u => u.status === 'active'))).catch(() => setUsers([]));
+  }, [admin]);
+
+  const current = contract.manager || '';
+  if (!admin) return <span>담당자 · <b>{current || '—'}</b></span>;
+
+  const names = [...new Set([current, ...(users || []).map(u => u.name)].filter(Boolean))];
+  const change = async (name) => {
+    if (!name || name === current) return;
+    setSaving(true);
+    try {
+      await apiClient.setManager(contract.no, name);
+      toast?.(`담당자를 ${name}(으)로 변경했습니다`, 'success');
+      await onUpdated?.();
+    } catch (e) {
+      toast?.('담당자 변경 실패: ' + e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
+      담당자 ·
+      <select value={current} disabled={saving || !users} onChange={e => change(e.target.value)}
+        style={{fontSize:12.5,fontWeight:700,padding:'2px 6px',border:'1px solid var(--line)',borderRadius:6,background:'#fff',color:'var(--ink-1)'}}>
+        {names.map(n => <option key={n} value={n}>{n}</option>)}
+      </select>
+    </span>
+  );
+};
+
 const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) => {
   // contractNo는 실제로는 계약의 고유 id (중복 no 대응)
   const baseContract = data.contracts.find(x => (x.id ?? x.no) === contractNo);
@@ -582,6 +622,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated }) =>
               <h1>{c.projectName || '(프로젝트명 없음)'}</h1>
               <div className="meta">
                 <span>거래처 · <b>{c.client}</b></span>
+                <ManagerField contract={c} onUpdated={onUpdated}/>
                 <span>계약일 · <b>{fmtDate(c.contractDate)}</b></span>
                 {c.subcontractor && <span>도급 · <b>{c.subcontractor}</b></span>}
               </div>
