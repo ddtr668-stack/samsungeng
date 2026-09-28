@@ -170,7 +170,7 @@ function SG_clearSessions_(id) {
 // ─── 권한 ───
 // 쓰기 요청 (조회 권한은 불가)
 var SG_WRITE_ROUTES_ = ['update', 'create', 'saveClient', 'saveSubcontractor', 'expensePdf',
-  'createPayment', 'updatePayment', 'deletePayment', 'saveExpense', 'cancelExpenseRound'];
+  'createPayment', 'updatePayment', 'deletePayment', 'saveExpense', 'cancelExpenseRound', 'saveContractItems'];
 // 관리자 전용
 var SG_ADMIN_ROUTES_ = ['saveAppSettings', 'backupSettings', 'saveBackupSettings', 'backupList',
   'runBackupNow', 'restoreBackup', 'users', 'updateUser', 'deleteUser', 'setManager'];
@@ -194,7 +194,8 @@ function SG_contractNoOf_(route, params, payload) {
   var p = payload || {};
   if (route === 'contract') return params.no || p.no;
   if (route === 'update') return p.no;
-  if (route === 'payments' || route === 'expenseByContract') return params.contractNo || p.contractNo;
+  if (route === 'payments' || route === 'expenseByContract' || route === 'contractItems') return params.contractNo || p.contractNo;
+  if (route === 'saveContractItems') return p.contractNo;
   if (route === 'createPayment' || route === 'updatePayment' || route === 'saveExpense' || route === 'cancelExpenseRound') return p.contractNo;
   return null;
 }
