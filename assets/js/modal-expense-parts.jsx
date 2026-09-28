@@ -483,7 +483,8 @@ const CategoryCard = ({
     textAlign:'right', color: included ? a.strong : 'var(--ink-4)', background:'#fff', fontVariantNumeric:'tabular-nums',
     fontFamily:'inherit', outline:'none',
   };
-  const AmountInput = () => (
+  // 렌더마다 새 컴포넌트가 되면 입력칸이 다시 만들어져 포커스가 풀림 → 함수로 호출
+  const amountInput = () => (
     <input
       type="number"
       value={included ? (currentAmount === 0 || currentAmount === '' || currentAmount == null ? '' : currentAmount) : 0}
@@ -604,7 +605,7 @@ const CategoryCard = ({
               </span>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <span style={{fontSize:11, color:'var(--ink-3)'}}>금회 요청</span>
-                <AmountInput/>
+                {amountInput()}
               </div>
             </div>
           </>
@@ -668,7 +669,7 @@ const CategoryCard = ({
               <span style={{fontSize:11, color: balance > 0 ? 'var(--warn)' : 'var(--pos)', fontWeight:700}}>{balance > 0 ? `잔액 ${_fmtNum(balance)}원` : '완납'}</span>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <span style={{fontSize:11, color:'var(--ink-3)'}}>금회 요청</span>
-                <AmountInput/>
+                {amountInput()}
               </div>
             </div>
           </>

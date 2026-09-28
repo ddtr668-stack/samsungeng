@@ -3,6 +3,16 @@
 ═══════════════════════════════════════════════════════════════ */
 const { useState, useEffect, useMemo, useRef, useCallback, Fragment } = React;
 
+// 모달 바깥(배경) 클릭 시 닫기 — 입력칸에서 드래그해 배경에서 마우스를 떼도 닫히지 않도록
+// 누른 곳과 뗀 곳이 모두 배경일 때만 닫음
+function backdropClose(onClose) {
+  let downOnSelf = false;
+  return {
+    onMouseDown: (e) => { downOnSelf = e.target === e.currentTarget; },
+    onClick: (e) => { if (downOnSelf && e.target === e.currentTarget) onClose(); downOnSelf = false; },
+  };
+}
+
 // ─── 계약 표시 번호: 담당자별 번호 "이상규-001" (없으면 전체 번호 #0106) ───
 const contractCode = (c) => {
   if (!c) return '';
@@ -485,6 +495,7 @@ const CardHead = ({ title, sub, right }) => (
 
 // Global export
 Object.assign(window, {
+  backdropClose,
   useState, useEffect, useMemo, useRef, useCallback, Fragment,
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,
   Icon, Sidebar, Topbar, usePagination, Pager,
