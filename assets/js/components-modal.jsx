@@ -138,7 +138,7 @@ const Modal = ({ open, onClose, title, subtitle, children, footer, width = 'defa
       };
 
   return (
-    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-backdrop" {...backdropClose(onClose)}>
       <div ref={modalElRef} className={'modal' + wCls} style={modalStyle}>
         <div
           className="modal-head"

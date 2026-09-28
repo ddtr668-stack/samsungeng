@@ -170,7 +170,7 @@ const PaymentModal = ({ open, contract, onClose, onSaved }) => {
   let cumPaid = 0;
 
   return (
-    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-backdrop" {...backdropClose(onClose)}>
       <div className="modal" style={{ maxWidth: 780 }}>
         {/* 헤드 */}
         <div className="modal-head">
