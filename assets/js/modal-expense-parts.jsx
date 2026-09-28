@@ -437,6 +437,7 @@ const CategoryCard = ({
   icon, name, accent = 'green',
   toggle,           // { checked, onChange, includeLabel, excludeLabel } — 4개 카드 모두 사용
   vendorValue, onVendorChange, onSaveVendor, savingVendor, vendorPlaceholder, vendorLabel,
+  vendorOptions,    // 저장된 업체 이름 목록 → 드롭다운에서 선택
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
   onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
@@ -527,6 +528,17 @@ const CategoryCard = ({
         {/* 업체명 (탭과 무관하게 항상 표시) */}
         <div style={{display:'flex', alignItems:'center', gap:8, margin:'0 0 9px'}}>
           <label style={{fontSize:10.5, fontWeight:700, color:'var(--ink-3)', whiteSpace:'nowrap'}}>업체명</label>
+          {vendorOptions && vendorOptions.length > 0 && (
+            <select
+              value={vendorOptions.includes(vendorValue) ? vendorValue : ''}
+              onChange={e => { if (e.target.value) onVendorChange?.(e.target.value); }}
+              aria-label={`${vendorLabel || name} 저장된 업체 선택`}
+              title="저장된 업체에서 선택"
+              style={{flex:'0 1 170px', minWidth:0, padding:'6px 7px', border:`1px solid ${a.line}`, borderRadius:6, fontSize:12, background:'#fff', color:'var(--ink-2)', fontFamily:'inherit', cursor:'pointer'}}>
+              <option value="">▼ 저장된 업체 선택</option>
+              {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+          )}
           <input
             value={vendorValue || ''}
             onChange={e => onVendorChange?.(e.target.value)}

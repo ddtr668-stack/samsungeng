@@ -112,6 +112,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 기타경비 총액: 계약관리 시트 값(incidental)을 불러와 화면에서 수정 가능
   const [etcBudget, setEtcBudget] = useState('');
   const [savingEtcBudget, setSavingEtcBudget] = useState(false);
+  const [savedVendorNames, setSavedVendorNames] = useState([]);   // 이번 창에서 새로 저장한 업체
   // 🆕 v3: 항목별 기성 카드마다 별도로 지정할 수 있는 업체명(지급대상이 카테고리별로 다를 때)
   const [productVendorName, setProductVendorName] = useState('');
   const [commissionVendorName, setCommissionVendorName] = useState('');
@@ -340,6 +341,13 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).etc, no: h.no }))
     .filter(r => r.amount > 0);
 
+  // 업체 드롭다운: 도급업체 관리에 저장된 업체 + 이전 지출품의서에서 쓴 업체명 + 이번 창에서 저장한 업체
+  const vendorOptions = [...new Set([
+    ...((data && data.subcontractors) || []).map(v => v && v.name),
+    ...expenseHistory.flatMap(h => [h.productVendorName, h.etcVendorName, h.commissionVendorName, h.subcontractor]),
+    ...savedVendorNames,
+  ].map(v => String(v || '').trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y, 'ko'));
+
   // 계약금 · 중도금 · 잔금 분류 (1회차=계약금 · 잔금 남은 추가입금=중도금 합산)
   const paySplit = window.classifyPayments(contract.totalAmount, payments || [], contract.paidAmount);
 
@@ -379,6 +387,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setSavingVendorCat(catKey);
     try {
       await apiClient.saveSubcontractor({ name: name.trim() });
+      setSavedVendorNames(v => v.includes(name.trim()) ? v : [...v, name.trim()]);   // 드롭다운에 바로 추가
       toast?.(`"${name}" ${label} 업체정보 저장 완료`, 'success');
       window.refreshData?.().catch(() => {});
     } catch (e) {
@@ -1030,7 +1039,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="📦" name="제품대(장비대) 기성" accent="blue"
         toggle={{ checked: includeProduct, onChange: setIncludeProduct, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorValue={productVendorName} onVendorChange={setProductVendorName}
+        vendorValue={productVendorName} onVendorChange={setProductVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="제품대 지급 업체명" vendorLabel="제품대"
         onSaveVendor={() => handleSaveCategoryVendorName('product', productVendorName, '제품대')}
         savingVendor={savingVendorCat === 'product'}
@@ -1185,7 +1194,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="🧾" name="기타경비 기성" accent="bronze"
         toggle={{ checked: includeEtc, onChange: setIncludeEtc, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorValue={etcVendorName} onVendorChange={setEtcVendorName}
+        vendorValue={etcVendorName} onVendorChange={setEtcVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="기타경비 지급 업체명" vendorLabel="기타경비"
         onSaveVendor={() => handleSaveCategoryVendorName('etc', etcVendorName, '기타경비')}
         savingVendor={savingVendorCat === 'etc'}
@@ -1205,7 +1214,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="💼" name="영업수수료 기성" accent="plum"
         toggle={{ checked: includeCommission, onChange: setIncludeCommission, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorValue={commissionVendorName} onVendorChange={setCommissionVendorName}
+        vendorValue={commissionVendorName} onVendorChange={setCommissionVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="영업수수료 지급 대상" vendorLabel="영업수수료"
         onSaveVendor={() => handleSaveCategoryVendorName('commission', commissionVendorName, '영업수수료')}
         savingVendor={savingVendorCat === 'commission'}
