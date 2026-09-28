@@ -669,6 +669,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const buildPrintHtml = () => window.buildExpensePrintHtml({
     // 기타경비 총액은 화면에서 수정한 값으로 출력
     contract: { ...contract, incidental: etcBudgetNum }, form,
+    subcontractors: (data && data.subcontractors) || [],   // 항목별 업체 정보 조회용
     koreanAmount: numberToKoreanAmount(grandTotal),
     requestAmount, etcTotal: etcRequestAmount, commissionTotal: commissionRequestAmount, grandTotal,
     installItems, productItems, productSummary, productTotal, productAmount: productRequestAmount,
@@ -1174,7 +1175,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="🔧" name="설치비 기성" accent="green"
         toggle={{ checked: includeInstall, onChange: setIncludeInstall, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorValue={form.subName} onVendorChange={v => setForm({...form, subName: v})}
+        vendorValue={form.subName} onVendorChange={v => {
+          const known = ((data && data.subcontractors) || []).some(x => x && String(x.name || '').trim() === String(v).trim());
+          if (known) pickInstallVendor(String(v).trim()); else setForm({...form, subName: v});
+        }}
         vendorOptions={vendorOptions}
         onVendorPick={pickInstallVendor}
         vendorPlaceholder="설치비 지급 업체명" vendorLabel="설치비"
