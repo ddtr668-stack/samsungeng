@@ -117,6 +117,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const [productVendorName, setProductVendorName] = useState('');
   const [commissionVendorName, setCommissionVendorName] = useState('');
   const [etcVendorName, setEtcVendorName] = useState('');
+  // 항목별 비고(지급 사유)
+  const EMPTY_NOTES = { product:'', install:'', etc:'', commission:'' };
+  const [catNotes, setCatNotes] = useState(EMPTY_NOTES);
+  const setCatNote = (k) => (v) => setCatNotes(n => ({ ...n, [k]: v }));
   const [savingVendorCat, setSavingVendorCat] = useState(null);   // 'install'|'product'|'commission'|'etc'|null
 
   const [importing, setImporting] = useState(null);
@@ -179,6 +183,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setEtcBudget(contract?.incidental ? String(contract.incidental) : '');
     setProductVendorName('');
     setCommissionVendorName('');
+    setCatNotes(EMPTY_NOTES);
     setEtcVendorName('');
   }, [open, contract?.no]);
 
@@ -266,6 +271,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setProductVendorName(r.productVendorName || '');
     setCommissionVendorName(r.commissionVendorName || '');
     setEtcVendorName(r.etcVendorName || '');
+    setCatNotes({ ...EMPTY_NOTES, ...(r.catNotes || {}) });
     toast?.(`${r.roundNo}차 회차 데이터 복원됨${r.subcontractor ? ' (지급 대상 포함)' : ''}`, 'success');
   };
 
@@ -591,6 +597,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     // 🆕 v3: 구분(대표 항목) · 제품대 금회 요청금액 · 항목별 업체명 오버라이드
     docCategory, productAmount: productRequestAmount,
     productVendorName, commissionVendorName, etcVendorName,
+    catNotes,
   });
 
   const handleSave = async () => {
@@ -690,6 +697,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     includeInstall, includeProduct, includeCommission, includeEtc,
     // 🆕 v3: 카테고리별 업체명 오버라이드(지정 안 하면 출력에서 기본 도급업체 정보를 그대로 사용)
     productVendorName, commissionVendorName, etcVendorName,
+    catNotes,
     companyName: form.companyName,   // 작성자가 선택·수정한 출력용 회사명
     paySplit,
   });
@@ -1097,6 +1105,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         icon="📦" name="제품대(장비대) 기성" accent="blue"
         toggle={{ checked: includeProduct, onChange: setIncludeProduct, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
         vendorDetail={vendorDetailOf(productVendorName)}
+        note={catNotes.product} onNoteChange={setCatNote('product')}
         vendorValue={productVendorName} onVendorChange={setProductVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="제품대 지급 업체명" vendorLabel="제품대"
         onSaveVendor={() => handleSaveCategoryVendorName('product', productVendorName, '제품대')}
@@ -1187,6 +1196,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         icon="🔧" name="설치비 기성" accent="green"
         toggle={{ checked: includeInstall, onChange: setIncludeInstall, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
         vendorDetail={installVendorDetail}
+        note={catNotes.install} onNoteChange={setCatNote('install')}
         vendorValue={form.subName} onVendorChange={v => {
           const known = ((data && data.subcontractors) || []).some(x => x && String(x.name || '').trim() === String(v).trim());
           if (known) pickInstallVendor(String(v).trim()); else setForm({...form, subName: v});
@@ -1261,6 +1271,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         icon="🧾" name="기타경비 기성" accent="bronze"
         toggle={{ checked: includeEtc, onChange: setIncludeEtc, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
         vendorDetail={vendorDetailOf(etcVendorName)}
+        note={catNotes.etc} onNoteChange={setCatNote('etc')}
         vendorValue={etcVendorName} onVendorChange={setEtcVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="기타경비 지급 업체명" vendorLabel="기타경비"
         onSaveVendor={() => handleSaveCategoryVendorName('etc', etcVendorName, '기타경비')}
@@ -1284,6 +1295,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         icon="💼" name="영업수수료 기성" accent="plum"
         toggle={{ checked: includeCommission, onChange: setIncludeCommission, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
         vendorDetail={vendorDetailOf(commissionVendorName)}
+        note={catNotes.commission} onNoteChange={setCatNote('commission')}
         vendorValue={commissionVendorName} onVendorChange={setCommissionVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="영업수수료 지급 대상" vendorLabel="영업수수료"
         onSaveVendor={() => handleSaveCategoryVendorName('commission', commissionVendorName, '영업수수료')}

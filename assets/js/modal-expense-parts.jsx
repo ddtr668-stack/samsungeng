@@ -449,6 +449,7 @@ const CategoryCard = ({
   vendorOptions,    // 저장된 업체 이름 목록 → 드롭다운에서 선택
   onVendorPick,     // 드롭다운에서 골랐을 때 (없으면 onVendorChange)
   vendorDetail,     // { ceo, bizNo, bank, account, holder } — 업체명 아래 한 줄로 표시
+  note, onNoteChange, // 항목별 비고(지급 사유) — 출력물 지급대상 비고·상세내역에 표시
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
   onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
@@ -572,6 +573,15 @@ const CategoryCard = ({
           </div>
         )}
 
+        {onNoteChange && (
+          <div style={{display:'flex', alignItems:'center', gap:8, margin:'0 0 9px'}}>
+            <label style={{fontSize:10.5, fontWeight:700, color:'var(--ink-3)', whiteSpace:'nowrap'}}>비고</label>
+            <input value={note || ''} onChange={e => onNoteChange(e.target.value)}
+              placeholder="지급 사유 (예: 10월 3일 납품 예정 · 계약금 40% 지급)"
+              aria-label={`${name} 비고`}
+              style={{flex:1, padding:'6px 9px', border:`1px solid ${a.line}`, borderRadius:6, fontSize:12, background:'#fff', color:'var(--ink-1)', outline:'none', fontFamily:'inherit'}}/>
+          </div>
+        )}
         {tab === 'summary' ? (
           <>
             <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, padding:'9px 10px', background:'#fff', border:`1px solid ${a.line}`, borderRadius:6, marginBottom:8}}>

@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-28-02 (업체정보 저장 시 기존 정보 보호)';
+var BUILD_VERSION_ = '2026-09-28-03 (항목별 비고)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -1284,7 +1284,8 @@ function apiExpenseHistoryByContract_(contractNo) {
           productAmount: detail.productAmount === undefined ? undefined : Number(detail.productAmount) || 0,
           commissionAmount: detail.commission === undefined ? undefined : Number(detail.commission) || 0,
           etcAmount: detail.etcCost === undefined ? undefined : Number(detail.etcCost) || 0,
-          productVendorName: detail.productVendorName || '', commissionVendorName: detail.commissionVendorName || '', etcVendorName: detail.etcVendorName || ''
+          productVendorName: detail.productVendorName || '', commissionVendorName: detail.commissionVendorName || '', etcVendorName: detail.etcVendorName || '',
+          catNotes: detail.catNotes || {}
         });
       }
     }
@@ -1409,7 +1410,9 @@ function appendExpenseLogEntry_(p) {
     // 이 JSON 상세 블록에만 추가(비파괴적 확장).
     docCategory: p.docCategory || 'install',
     productAmount: p.productAmount === undefined ? undefined : Number(p.productAmount) || 0,
-    productVendorName: p.productVendorName || '', commissionVendorName: p.commissionVendorName || '', etcVendorName: p.etcVendorName || ''
+    productVendorName: p.productVendorName || '', commissionVendorName: p.commissionVendorName || '', etcVendorName: p.etcVendorName || '',
+    // 항목별 비고(지급 사유) { product, install, etc, commission }
+    catNotes: p.catNotes || {}
   };
   var json = JSON.stringify(detail);
   if (json.length > 49000) {            // 셀 한도(5만자) 보호 - 제품 상세는 생략
