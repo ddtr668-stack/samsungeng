@@ -404,10 +404,14 @@ function buildExpensePrintHtml(d) {
     </table>`;
   // 🆕 화면(v3) 카드 순서와 동일하게: 제품대 → 설치비 → 기타비용 → 영업수수료
   const vendorRows = [];
-  if (includeProduct && productCur > 0) vendorRows.push({ amt: productCur, note: '제품대', ...infoOf(d.productVendorName) });
-  if (includeInstall && req > 0) vendorRows.push({ amt: req, note: '설치비', ...infoOf(mainInfo.name) });
-  if (includeEtc && etcCur > 0) vendorRows.push({ amt: etcCur, note: '기타비용', ...infoOf(d.etcVendorName) });
-  if (includeCommission && commissionCur > 0) vendorRows.push({ amt: commissionCur, note: '영업수수료', ...infoOf(d.commissionVendorName) });
+  // 항목별 비고(지급 사유)
+  const catNote = (k) => String(((d.catNotes || {})[k]) || '').trim();
+  const withNote = (label, k) => catNote(k) ? `${label} · ${catNote(k)}` : label;
+  const noteLine = (k) => catNote(k) ? `<div style="margin:0 0 1.5mm;padding:1.2mm 2mm;border:0.6pt solid #000;font-size:9pt"><b>비고</b> ${_pEsc(catNote(k))}</div>` : '';
+  if (includeProduct && productCur > 0) vendorRows.push({ amt: productCur, note: withNote('제품대', 'product'), ...infoOf(d.productVendorName) });
+  if (includeInstall && req > 0) vendorRows.push({ amt: req, note: withNote('설치비', 'install'), ...infoOf(mainInfo.name) });
+  if (includeEtc && etcCur > 0) vendorRows.push({ amt: etcCur, note: withNote('기타비용', 'etc'), ...infoOf(d.etcVendorName) });
+  if (includeCommission && commissionCur > 0) vendorRows.push({ amt: commissionCur, note: withNote('영업수수료', 'commission'), ...infoOf(d.commissionVendorName) });
   const vendorTotal = vendorRows.reduce((s, r) => s + r.amt, 0);
   const vendorRowsHtml = vendorRows.map((r, i) => `
         <tr>
@@ -543,6 +547,7 @@ function buildExpensePrintHtml(d) {
 
   ${!showCat.product ? '' : `<div class="sec sec-div">
     <h2><span class="num">${catNo.product}.</span>제품대<small>${includeProduct ? `제품대 총액 ${_pNum(productTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+    ${noteLine('product')}
     ${vendorInfoTable(infoOf(d.productVendorName))}
     ${buildRoundHistoryTable(d.productRounds, productCur, includeProduct, productTotalBudget, docDate, roundLabel)}
     ${productItemsTable}
@@ -550,6 +555,7 @@ function buildExpensePrintHtml(d) {
 
   ${!showCat.install ? '' : `<div class="sec sec-div">
     <h2><span class="num">${catNo.install}.</span>설치비<small>${includeInstall ? `총금액 ${_pNum(installTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+    ${noteLine('install')}
     ${vendorInfoTable(infoOf(mainInfo.name))}
     ${buildRoundHistoryTable(d.rounds, req, includeInstall, installTotalBudget, docDate, roundLabel)}
     ${installItemsTable}
@@ -557,6 +563,7 @@ function buildExpensePrintHtml(d) {
 
   ${!showCat.etc ? '' : `<div class="sec sec-div">
     <h2><span class="num">${catNo.etc}.</span>기타비용<small>${includeEtc ? `기타비용 총액 ${_pNum(etcTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+    ${noteLine('etc')}
     ${vendorInfoTable(infoOf(d.etcVendorName))}
     ${buildRoundHistoryTable(d.etcRounds, etcCur, includeEtc, etcTotalBudget, docDate, roundLabel)}
     ${etcItemsTable}
@@ -564,6 +571,7 @@ function buildExpensePrintHtml(d) {
 
   ${!showCat.commission ? '' : `<div class="sec sec-div">
     <h2><span class="num">${catNo.commission}.</span>영업수수료<small>${includeCommission ? `영업수수료 총액 ${_pNum(commissionTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+    ${noteLine('commission')}
     ${vendorInfoTable(infoOf(d.commissionVendorName))}
     ${buildRoundHistoryTable(d.commissionRounds, commissionCur, includeCommission, commissionTotalBudget, docDate, roundLabel)}
     ${commissionItemsTable}

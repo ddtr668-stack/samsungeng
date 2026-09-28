@@ -67,7 +67,7 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
       try { const r = await apiClient.ping(); ver = r.version || '버전 정보 없음 (구버전 코드)'; }
       catch (e2) { ver = '확인 실패: ' + e2.message; }
       // 웹앱이 예전 버전으로 배포돼 있으면 원인을 바로 안내
-      const EXPECTED = '2026-09-28-02';
+      const EXPECTED = '2026-09-28-03';
       const verDate = (String(ver).match(/\d{4}-\d{2}-\d{2}-\d{2}/) || [''])[0];
       const outdated = verDate && verDate < EXPECTED;
       setError(outdated
