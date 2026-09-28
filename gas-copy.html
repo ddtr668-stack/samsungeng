@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apps Script 코드 복사</title>
+<style>
+  :root { --bg:#f6f7f5; --card:#fff; --ink:#1d2a22; --muted:#66756b; --line:#dfe5e0; --accent:#1f5c3a; --ok:#1f7a45; --err:#b3261e; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,'Malgun Gothic',sans-serif; }
+  main { max-width:880px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:20px; margin:0 0 6px; }
+  p.lead { color:var(--muted); margin:0 0 18px; font-size:14px; line-height:1.6; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .name { font-weight:700; font-size:15px; flex:1; min-width:160px; }
+  .meta { color:var(--muted); font-size:13px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:7px; padding:9px 16px; font-size:14px; font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .status { font-size:13px; margin-top:8px; min-height:18px; }
+  .status.ok { color:var(--ok); } .status.err { color:var(--err); }
+  textarea { width:100%; box-sizing:border-box; height:120px; margin-top:10px; font:12px/1.4 ui-monospace,Consolas,monospace; border:1px solid var(--line); border-radius:6px; padding:8px; }
+  ol { font-size:14px; line-height:1.8; padding-left:20px; margin:0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Apps Script 코드 복사</h1>
+  <p class="lead">[전체 복사]를 누르면 파일 전체가 클립보드에 들어갑니다. Apps Script 편집기에서 해당 파일을 <b>Ctrl+A → Ctrl+V</b> 로 통째로 바꾸고, 마지막 줄 번호가 아래 줄 수와 같은지 확인하세요.</p>
+  <div id="list"></div>
+  <div class="card">
+    <ol>
+      <li>파일마다 [전체 복사] → Apps Script 편집기의 같은 이름 파일에서 Ctrl+A → Ctrl+V → 저장(Ctrl+S)</li>
+      <li>편집기 맨 아래 줄 번호가 위 "줄 수"와 같은지 확인 (다르면 잘린 것)</li>
+      <li>배포 → 배포 관리 → ✏️ → 버전 "새 버전" → 배포 ("새 배포" 아님)</li>
+    </ol>
+  </div>
+</main>
+<script>
+var FILES = ['DashboardApi.gs', 'Auth.gs'];
+var list = document.getElementById('list');
+FILES.forEach(function (name) {
+  var card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<div class="row"><div class="name">' + name + '</div><span class="meta">불러오는 중…</span><button disabled>전체 복사</button></div><div class="status"></div><textarea readonly aria-label="' + name + ' 코드"></textarea>';
+  list.appendChild(card);
+  var meta = card.querySelector('.meta'), btn = card.querySelector('button'), st = card.querySelector('.status'), ta = card.querySelector('textarea');
+  fetch('gas-backend/' + name + '?v=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function (text) {
+      ta.value = text;
+      var lines = text.replace(/\n$/, '').split('\n').length;
+      var ver = (text.match(/BUILD_VERSION_\s*=\s*'([^']+)'/) || [])[1];
+      meta.textContent = '줄 수 ' + lines.toLocaleString() + (ver ? ' · 버전 ' + ver : '');
+      btn.disabled = false;
+      btn.onclick = function () {
+        var done = function () { st.className = 'status ok'; st.textContent = '✅ ' + lines.toLocaleString() + '줄 복사됨 — 편집기에 붙여넣으세요'; };
+        var fallback = function () { ta.focus(); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { st.className = 'status err'; st.textContent = '복사 실패 — 아래 칸을 클릭하고 Ctrl+A, Ctrl+C 하세요'; } };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+      };
+    })
+    .catch(function (e) { meta.textContent = ''; st.className = 'status err'; st.textContent = '불러오기 실패: ' + e.message; });
+});
+</script>
+</body>
+</html>
