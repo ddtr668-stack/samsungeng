@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-28-01 (지출품의서 저장 시 계약 총액 보호)';
+var BUILD_VERSION_ = '2026-09-28-02 (업체정보 저장 시 기존 정보 보호)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -695,9 +695,9 @@ function apiSaveClient_(payload) {
         }
       });
 
-      psheet.getRange(ptargetRow, 1).setValue(bizNo);
+      if (bizNo) psheet.getRange(ptargetRow, 1).setValue(bizNo);   // 비어 있으면 기존 번호 유지
       psheet.getRange(ptargetRow, 2).setValue(name);
-      psheet.getRange(ptargetRow, 3).setValue(p.ceo || '');
+      if (has_('ceo')) psheet.getRange(ptargetRow, 3).setValue(p.ceo);
       psheet.getRange(ptargetRow, 4).setValue(p.address || '');
       psheet.getRange(ptargetRow, 12).setValue(p.tel || '');
       psheet.getRange(ptargetRow, 11).setValue(today);
@@ -820,6 +820,8 @@ function apiSaveSubcontractor_(payload) {
   var bizNo = String(p.bizNo || '').trim();
   var nk = _gNorm_(name);
 
+  // 보낸 항목만 갱신 — 업체명만 보내면 기존 대표자·계좌 등이 빈칸으로 지워지던 문제 방지
+  var has_ = function (k) { return Object.prototype.hasOwnProperty.call(p, k) && p[k] !== undefined && p[k] !== null; };
   var result = { registry: 'skip', partner: 'skip' };
   var changesForLog = [];
 
@@ -846,14 +848,17 @@ function apiSaveSubcontractor_(payload) {
       Object.keys(regLabels_).forEach(function(k) {
         var idx = C[k];
         if (idx == null || idx < 0) return;
+        if (!has_(k)) return;
         var before = String((oldRow && oldRow[idx]) || '');
         var after = String(newRegVals_[k]);
         if (before !== after) changesForLog.push({ field: k, label: regLabels_[k], before: before, after: after });
       });
 
-      setCol(targetRow, C.bizNo, bizNo); setCol(targetRow, C.name, name); setCol(targetRow, C.ceo, p.ceo || '');
-      setCol(targetRow, C.tel, p.tel || ''); setCol(targetRow, C.manager, p.manager || ''); setCol(targetRow, C.address, p.address || '');
-      setCol(targetRow, C.bank, p.bank || ''); setCol(targetRow, C.account, p.account || ''); setCol(targetRow, C.holder, p.holder || '');
+      if (has_('bizNo') && bizNo) setCol(targetRow, C.bizNo, bizNo);
+      setCol(targetRow, C.name, name);
+      ['ceo', 'tel', 'manager', 'address', 'bank', 'account', 'holder'].forEach(function (k) {
+        if (has_(k)) setCol(targetRow, C[k], p[k]);
+      });
       result.registry = 'updated';
     } else {
       var row = new Array(reg.width).fill('');
@@ -893,9 +898,9 @@ function apiSaveSubcontractor_(payload) {
     }
     var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
     if (ptargetRow) {
-      psheet.getRange(ptargetRow, 1).setValue(bizNo);
+      if (bizNo) psheet.getRange(ptargetRow, 1).setValue(bizNo);   // 비어 있으면 기존 번호 유지
       psheet.getRange(ptargetRow, 2).setValue(name);
-      psheet.getRange(ptargetRow, 3).setValue(p.ceo || '');
+      if (has_('ceo')) psheet.getRange(ptargetRow, 3).setValue(p.ceo);
       if (p.address) psheet.getRange(ptargetRow, 4).setValue(p.address);
       if (p.tel) psheet.getRange(ptargetRow, 12).setValue(p.tel);
       psheet.getRange(ptargetRow, 11).setValue(today);

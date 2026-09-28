@@ -245,7 +245,7 @@ window.buildSubcontractorOptions = buildSubcontractorOptions;
 // v3: 이 블록 자체의 "💾 업체정보 저장" 버튼은 없앴다 — 저장은 아래 "설치비 기성" 카드의
 // 개별 저장 버튼(onSaveVendor prop, modal-expense.jsx 의 handleSaveFullVendor)에서 담당한다.
 // 이 컴포넌트는 순수하게 입력 폼(도급업체 선택 + 필드 표시/수정)만 맡는다.
-const SubcontractorBlock = ({ form, setForm, data, clientOptions = [] }) => {
+const SubcontractorBlock = ({ form, setForm, data, clientOptions = [], onSave, saving }) => {
   const groups = React.useMemo(
     () => buildSubcontractorOptions(data || { clients: clientOptions }),
     [data, clientOptions]
@@ -291,9 +291,18 @@ const SubcontractorBlock = ({ form, setForm, data, clientOptions = [] }) => {
         <div style={{fontSize:11.5, fontWeight:700, color:'var(--ink-2)', letterSpacing:'0.02em'}}>
           🏢 지급 대상 (도급업체)
         </div>
-        <span style={{fontSize:10, color:'var(--ink-3)'}}>
-          도급업체 시트 · 거래처관리 · 계약내역에서 조회 ({all.length}곳) · 저장은 아래 항목별 기성 카드에서 각각 진행
-        </span>
+        <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+          <span style={{fontSize:10, color:'var(--ink-3)'}}>
+            도급업체 시트 · 거래처관리 · 계약내역에서 조회 ({all.length}곳)
+          </span>
+          {onSave && (
+            <button type="button" onClick={onSave} disabled={saving || !String(form.subName || '').trim()}
+              title="업체명·대표자·사업자번호·담당자·전화·은행·계좌·예금주·주소를 도급업체 목록에 저장 (다음부터 선택 가능)"
+              style={{fontSize:11, fontWeight:800, padding:'5px 11px', borderRadius:6, border:'1px solid var(--green-800)', background:'var(--green-800)', color:'#fff', cursor: saving ? 'wait' : 'pointer', whiteSpace:'nowrap'}}>
+              {saving ? '저장 중…' : '💾 업체정보 저장'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{display:'grid', gridTemplateColumns:'1.3fr 1.3fr 1fr 1.2fr', gap:10, marginBottom:8}}>
@@ -438,6 +447,7 @@ const CategoryCard = ({
   toggle,           // { checked, onChange, includeLabel, excludeLabel } — 4개 카드 모두 사용
   vendorValue, onVendorChange, onSaveVendor, savingVendor, vendorPlaceholder, vendorLabel,
   vendorOptions,    // 저장된 업체 이름 목록 → 드롭다운에서 선택
+  onVendorPick,     // 드롭다운에서 골랐을 때 (없으면 onVendorChange)
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
   onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
@@ -531,7 +541,7 @@ const CategoryCard = ({
           {vendorOptions && vendorOptions.length > 0 && (
             <select
               value={vendorOptions.includes(vendorValue) ? vendorValue : ''}
-              onChange={e => { if (e.target.value) onVendorChange?.(e.target.value); }}
+              onChange={e => { if (e.target.value) (onVendorPick || onVendorChange)?.(e.target.value); }}
               aria-label={`${vendorLabel || name} 저장된 업체 선택`}
               title="저장된 업체에서 선택"
               style={{flex:'0 1 170px', minWidth:0, padding:'6px 7px', border:`1px solid ${a.line}`, borderRadius:6, fontSize:12, background:'#fff', color:'var(--ink-2)', fontFamily:'inherit', cursor:'pointer'}}>

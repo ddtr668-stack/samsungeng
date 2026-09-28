@@ -341,6 +341,15 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).etc, no: h.no }))
     .filter(r => r.amount > 0);
 
+  // 설치비 업체를 목록에서 고르면 지급 대상(도급업체) 정보도 그 업체로 채움 (계좌 오입금 방지: 없는 값은 빈칸)
+  const pickInstallVendor = (name) => {
+    const v = ((data && data.subcontractors) || []).find(x => x && String(x.name || '').trim() === name) || null;
+    setForm(f => v ? {
+      ...f, subName: name, subBizNo: v.bizNo || '', subCeo: v.ceo || '', subAddress: v.address || '',
+      subManager: v.manager || '', subManagerTel: v.tel || '', subBank: v.bank || '', subAccount: v.account || '', subHolder: v.holder || '',
+    } : { ...f, subName: name });
+  };
+
   // 업체 드롭다운: 도급업체 관리에 저장된 업체 + 이전 지출품의서에서 쓴 업체명 + 이번 창에서 저장한 업체
   const vendorOptions = [...new Set([
     ...((data && data.subcontractors) || []).map(v => v && v.name),
@@ -381,12 +390,34 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // - 제품대/영업수수료/기타경비 카드: 업체명만 도급업체 등록 시트에 가볍게 저장(참고용 등록).
   //   카테고리별로 지급처가 다를 수 있어 이름만 별도 등록 — 상세정보(계좌 등)는 지급대상 섹션의
   //   기본 도급업체 정보를 함께 참고해 사용한다.
+  // 지급 대상(도급업체) 칸의 모든 정보를 도급업체 목록에 저장
+  const handleSaveSubcontractorInfo = async () => {
+    const name = String(form.subName || '').trim();
+    if (!name) { toast?.('업체명을 입력하세요', 'error'); return; }
+    if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    setSavingVendorCat('main');
+    try {
+      await apiClient.saveSubcontractor({
+        name, bizNo: form.subBizNo || '', ceo: form.subCeo || '', address: form.subAddress || '',
+        manager: form.subManager || '', tel: form.subManagerTel || '',
+        bank: form.subBank || '', account: form.subAccount || '', holder: form.subHolder || '',
+      });
+      setSavedVendorNames(v => v.includes(name) ? v : [...v, name]);
+      toast?.(`"${name}" 업체정보를 저장했습니다`, 'success');
+      await onSaved?.();
+    } catch (e) {
+      toast?.('업체 정보 저장 실패: ' + errMsg(e), 'error');
+    } finally { setSavingVendorCat(null); }
+  };
+
   const handleSaveCategoryVendorName = async (catKey, name, label) => {
     if (!name || !name.trim()) { toast?.('업체명을 입력하세요', 'error'); return; }
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     setSavingVendorCat(catKey);
     try {
-      await apiClient.saveSubcontractor({ name: name.trim() });
+      // 이미 등록된 업체면 기존 정보(대표자·계좌 등)를 함께 보내 지워지지 않게 함
+      const known = ((data && data.subcontractors) || []).find(v => v && String(v.name || '').trim() === name.trim()) || {};
+      await apiClient.saveSubcontractor({ ...known, name: name.trim() });
       setSavedVendorNames(v => v.includes(name.trim()) ? v : [...v, name.trim()]);   // 드롭다운에 바로 추가
       toast?.(`"${name}" ${label} 업체정보 저장 완료`, 'success');
       window.refreshData?.().catch(() => {});
@@ -1025,6 +1056,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         setForm={setForm}
         data={data}
         clientOptions={data?.clients || []}
+        onSave={handleSaveSubcontractorInfo}
+        saving={savingVendorCat === 'main'}
       />
 
       {/* v3 ③④⑤⑥ : 항목별 기성 관리 — 카드 순서(제품대→설치비→기타경비→영업수수료) + 내역서 병합 + 탭 */}
@@ -1127,6 +1160,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         icon="🔧" name="설치비 기성" accent="green"
         toggle={{ checked: includeInstall, onChange: setIncludeInstall, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
         vendorValue={form.subName} onVendorChange={v => setForm({...form, subName: v})}
+        vendorOptions={vendorOptions}
+        onVendorPick={pickInstallVendor}
         vendorPlaceholder="설치비 지급 업체명" vendorLabel="설치비"
         onSaveVendor={handleSaveFullVendor}
         savingVendor={savingVendorCat === 'install'}
