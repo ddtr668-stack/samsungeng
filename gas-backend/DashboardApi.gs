@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-25-05 (공사 진행 날짜)';
+var BUILD_VERSION_ = '2026-09-28-01 (지출품의서 저장 시 계약 총액 보호)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -391,9 +391,18 @@ function syncContractAmountsFromExpense_(contractNo, p) {
       incidental: Number(p.etcCost) || 0              // 기타 경비 합계
     };
 
+    // 지출품의서의 금액은 '이번 회차 요청액'이므로 계약 총액을 덮어쓰면 안 됨
+    // (예: 도급금액 1,650만 중 1차 500만 요청 → 도급금액이 500만으로 바뀌던 문제)
+    // → 계약관리 시트에 총액이 비어 있는 항목만 채운다
+    var current = null;
+    try {
+      var list = readContracts_();
+      for (var i = 0; i < list.length; i++) { if (Number(list[i].no) === Number(contractNo)) { current = list[i]; break; } }
+    } catch (e) { current = null; }
     var patch = {};
     Object.keys(candidates).forEach(function (field) {
-      if (candidates[field] > 0) patch[field] = candidates[field];
+      var existing = current ? (Number(current[field]) || 0) : 0;
+      if (candidates[field] > 0 && existing <= 0) patch[field] = candidates[field];
     });
     if (Object.keys(patch).length === 0) return { ok: true, updated: [] };
 

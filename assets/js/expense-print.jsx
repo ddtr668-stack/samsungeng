@@ -341,8 +341,10 @@ function buildExpensePrintHtml(d) {
 
   // ── 손익 계산 : 총계약금액 − 설치비 − 제품대 − 기타비용 − 영업수수료 ──
   const pnlSales   = Number(c.totalAmount) || 0;
-  const pnlInstall = inst.length ? installItemTotal : installTotalBudget;
-  const pnlProduct = prod.length ? productCur : productTotalBudget;
+  // 손익은 '총액' 기준 — 계약관리 시트 금액 우선, 없으면 내역서 합계 (금회 지급액을 쓰면 안 됨)
+  const productItemTotal = prod.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.unitPrice) || 0), 0);
+  const pnlInstall = installTotalBudget || installItemTotal;
+  const pnlProduct = productTotalBudget || productItemTotal;
   const pnlEtc     = etcTotalBudget || etcCur;
   const pnlCom     = commissionTotalBudget || commissionCur;
   const pnlProfit  = pnlSales - pnlInstall - pnlProduct - pnlEtc - pnlCom;
@@ -504,8 +506,8 @@ function buildExpensePrintHtml(d) {
       <thead><tr><th>구분</th><th>금액(원)</th><th>산출 근거</th></tr></thead>
       <tbody>
         <tr><th>총 계약금액</th><td class="r">${_pNum(pnlSales)}</td><td class="l">계약금액 (VAT 포함)</td></tr>
-        <tr><th>(-) 제품대</th><td class="r">${_pNum(pnlProduct)}</td><td class="l">${prod.length ? '제품 내역서 합계' : (productTotalBudget ? '계약관리 시트 제품대' : '-')}</td></tr>
-        <tr><th>(-) 설치비</th><td class="r">${_pNum(pnlInstall)}</td><td class="l">${inst.length ? '설치비 내역서 합계' : '도급금액 (내역서 미입력)'}</td></tr>
+        <tr><th>(-) 제품대</th><td class="r">${_pNum(pnlProduct)}</td><td class="l">${productTotalBudget ? '계약관리 시트 제품대 (총액)' : (prod.length ? '제품 내역서 합계' : '-')}</td></tr>
+        <tr><th>(-) 설치비</th><td class="r">${_pNum(pnlInstall)}</td><td class="l">${installTotalBudget ? '계약관리 시트 도급금액 (총액)' : (inst.length ? '설치비 내역서 합계' : '-')}</td></tr>
         <tr><th>(-) 기타비용</th><td class="r">${_pNum(pnlEtc)}</td><td class="l">${pnlEtc ? '계약관리 시트 부대비용' : '-'}</td></tr>
         <tr><th>(-) 영업수수료</th><td class="r">${_pNum(pnlCom)}</td><td class="l">${pnlCom ? '계약관리 시트 영업비용' : '-'}</td></tr>
         <tr class="total pnl-sum"><th>예상 손익</th><td class="r">${_neg(pnlProfit)}</td><td class="l">예상 수익률 ${pnlRate.toFixed(1)}%</td></tr>
