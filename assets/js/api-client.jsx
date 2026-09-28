@@ -186,6 +186,9 @@ const api = {
   saveExpense: (payload) => apiFetch('saveExpense', { method:'POST', body: payload }),
   // 저장된 지출품의서 회차(설치비 기성) 삭제(취소 처리) — payload: { contractNo, no }
   cancelExpenseRound: (payload) => apiFetch('cancelExpenseRound', { method:'POST', body: payload }),
+  // 계약별 내역서(제품·설치·기타·수수료) — kind: 'product' | 'install' | 'etc' | 'commission'
+  getContractItems: (contractNo) => apiFetch('contractItems', { params: { contractNo } }),
+  saveContractItems: (contractNo, kind, items) => apiFetch('saveContractItems', { method:'POST', body: { contractNo, kind, items } }),
   // 도급업체 신규 등록/정보 수정 저장 (도급업체 등록 시트 + 거래처관리 시트에 함께 반영)
   saveSubcontractor: (payload) => apiFetch('saveSubcontractor', { method:'POST', body: payload }),
   // 거래처 정보 수정/신규 등록 저장 (거래처관리 시트에만 반영)

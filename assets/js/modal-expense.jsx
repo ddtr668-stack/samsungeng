@@ -122,6 +122,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const [catNotes, setCatNotes] = useState(EMPTY_NOTES);
   const setCatNote = (k) => (v) => setCatNotes(n => ({ ...n, [k]: v }));
   const [savingVendorCat, setSavingVendorCat] = useState(null);   // 'install'|'product'|'commission'|'etc'|null
+  // 계약별 내역서(품목표) 저장 — 지출품의서 회차 저장과 별개로, 불러온 내역을 계약에 보관
+  const [itemsSavedAt, setItemsSavedAt] = useState({});           // { product|install|etc|commission: 'yyyy-MM-dd HH:mm' }
+  const [savingItems, setSavingItems] = useState(null);
+  const itemsRef = useRef({});
+  itemsRef.current = { product: productItems, install: installItems, etc: etcItems, commission: commissionItems };
 
   const [importing, setImporting] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -208,6 +213,70 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       .then(r => setPayments(r.payments || []))
       .catch(e => { console.warn('[listPayments]', e); setPayments([]); });
   }, [open, contract?.no]);
+
+  // ─── 계약별 저장된 내역서 불러오기 (새 지출품의서 · 아직 비어있는 표만 채움) ───
+  useEffect(() => {
+    if (!open || !contract?.no) return;
+    setItemsSavedAt({});
+    if (typeof hasApiUrl !== 'function' || !hasApiUrl() || !apiClient.getContractItems) return;
+    let alive = true;
+    apiClient.getContractItems(contract.no)
+      .then(r => {
+        if (!alive) return;
+        const saved = r.items || {};
+        const rowsOf = (v) => Array.isArray(v) ? v : (v && Array.isArray(v.items) ? v.items : []);
+        const isBlank = (rows) => !rows.some(x => x && (x.name || x.spec || x.item || Number(x.amount) || Number(x.unitPrice) || Number(x.qty)));
+        const cur = itemsRef.current;
+        const loaded = [];
+        if (!isBlank(rowsOf(saved.product)) && isBlank(cur.product)) {
+          const v = saved.product;
+          setProductItems(rowsOf(v));
+          setProductSummary(v && !Array.isArray(v) && v.summary ? v.summary : null);
+          if (v && v.filename) setProductFilename(v.filename);
+          loaded.push('제품대');
+        }
+        if (!isBlank(rowsOf(saved.install)) && isBlank(cur.install)) {
+          setInstallItems(rowsOf(saved.install));
+          if (saved.install && saved.install.filename) setInstallFilename(saved.install.filename);
+          loaded.push('설치비');
+        }
+        if (!isBlank(rowsOf(saved.etc)) && isBlank(cur.etc)) { setEtcItems(rowsOf(saved.etc)); loaded.push('기타경비'); }
+        if (!isBlank(rowsOf(saved.commission)) && isBlank(cur.commission)) { setCommissionItems(rowsOf(saved.commission)); loaded.push('영업수수료'); }
+        setItemsSavedAt(r.savedAt || {});
+        if (loaded.length) toast?.(`저장된 내역서 불러옴: ${loaded.join(' · ')}`, 'success');
+      })
+      .catch(e => console.warn('[contractItems]', e));
+    return () => { alive = false; };
+  }, [open, contract?.no]);
+
+  const handleSaveItems = async (kind) => {
+    if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    const label = { product:'제품대', install:'설치비', etc:'기타경비', commission:'영업수수료' }[kind];
+    const rows = { product: productItems, install: installItems, etc: etcItems, commission: commissionItems }[kind] || [];
+    const payload = { items: rows };
+    if (kind === 'product') { payload.summary = productSummary || null; payload.filename = productFilename || ''; }
+    if (kind === 'install') payload.filename = installFilename || '';
+    setSavingItems(kind);
+    try {
+      const r = await apiClient.saveContractItems(contract.no, kind, payload);
+      setItemsSavedAt(s => ({ ...s, [kind]: r.savedAt || '' }));
+      toast?.(`${label} 내역 저장 완료 (${rows.length}행) — 다음에 열면 자동으로 불러옵니다`, 'success');
+    } catch (e) {
+      toast?.(`${label} 내역 저장 실패: ` + errMsg(e), 'error');
+    } finally {
+      setSavingItems(null);
+    }
+  };
+  const saveItemsButton = (kind) => (
+    <button
+      onClick={() => handleSaveItems(kind)}
+      disabled={!!savingItems}
+      aria-label={`${ {product:'제품대',install:'설치비',etc:'기타경비',commission:'영업수수료'}[kind] } 내역 저장`}
+      title={itemsSavedAt[kind] ? `마지막 저장: ${itemsSavedAt[kind]}` : '이 계약에 내역을 저장 — 다음에 지출품의서를 열면 자동으로 불러옵니다'}
+      style={{padding:'5px 10px', fontSize:11, fontWeight:700, background: savingItems===kind ? 'var(--surface-2)' : 'var(--green-800, #1f5c3a)', color: savingItems===kind ? 'var(--ink-3)' : '#fff', border:'1px solid var(--green-800, #1f5c3a)', borderRadius:5, cursor: savingItems ? 'wait' : 'pointer'}}>
+      {savingItems === kind ? '⏳ 저장 중...' : '💾 내역 저장'}{itemsSavedAt[kind] && savingItems !== kind ? <span style={{fontWeight:500, opacity:.8, marginLeft:4}}>({String(itemsSavedAt[kind]).slice(5)})</span> : null}
+    </button>
+  );
 
   // ─── 지출품의서 이력 로드 (① 드롭박스) ───
   useEffect(() => {
@@ -1119,6 +1188,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         currentRoundLabel={`${form.paymentCount}차`}
         detailTitle="📄 제품 내역서 (장비대)"
         detailActions={<>
+          {saveItemsButton('product')}
           <button
             onClick={() => importProductXlsx('drive')}
             disabled={!!importing}
@@ -1215,6 +1285,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         deletingNo={deletingRound}
         detailTitle="📄 설치비 내역서"
         detailActions={<>
+          {saveItemsButton('install')}
           <button
             onClick={() => importInstallXlsx('drive')}
             disabled={!!importing}
@@ -1286,6 +1357,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onAmountChange={setEtcAmount}
         currentRoundLabel={`${form.paymentCount}차`}
         detailTitle="📄 기타 경비 내역"
+        detailActions={saveItemsButton('etc')}
       >
         <ItemsTable mode="simple" items={etcItems} setItems={setEtcItems} showReceipt/>
       </CategoryCard>
@@ -1308,6 +1380,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onAmountChange={setCommissionAmount}
         currentRoundLabel={`${form.paymentCount}차`}
         detailTitle="📄 영업 수수료 내역"
+        detailActions={saveItemsButton('commission')}
       >
         <ItemsTable mode="simple" items={commissionItems} setItems={setCommissionItems} showReceipt/>
       </CategoryCard>

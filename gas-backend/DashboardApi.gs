@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-28-03 (항목별 비고)';
+var BUILD_VERSION_ = '2026-09-28-04 (계약별 내역서 저장)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -114,6 +114,9 @@ function handleRequest_(e, method) {
       case 'expenseByContract': return apiExpenseHistoryByContract_(params.contractNo || payload.contractNo);
       case 'saveExpense':   return apiSaveExpense_(payload);
       case 'cancelExpenseRound': return apiCancelExpenseRound_(payload);
+      // ─── 계약별 내역서(제품·설치·기타·수수료 품목) 저장·조회 ───
+      case 'contractItems':      return apiGetContractItems_(params.contractNo || payload.contractNo);
+      case 'saveContractItems':  return apiSaveContractItems_(payload, user);
       // ─── 신규: 변경 이력 조회 ───
       case 'changeLog':     return (user.ownOnly && user.role !== 'admin') ? jsonOut_({ ok:true, log:[] }) : apiChangeLog_();
       // ─── 신규: 자동 백업(30일 보관) ───
@@ -237,6 +240,68 @@ function apiUpdateContract_(payload) {
     result.checkDates = saveCheckDates_(no, patch, payload.checkDates || {});
   }
   return jsonOut_(result);
+}
+
+// ============================================================
+// 계약별 내역서 ("계약내역서" 시트: 계약번호 · 구분 · 내역(JSON) · 저장일시 · 저장자)
+// 지출품의서를 저장하지 않아도 불러온 품목 내역을 계약별로 보관 → 다음에 열면 자동으로 불러옴
+// ============================================================
+var CONTRACT_ITEMS_SHEET_ = '계약내역서';
+var CONTRACT_ITEM_KINDS_ = ['product', 'install', 'etc', 'commission'];
+
+function getContractItemsSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(CONTRACT_ITEMS_SHEET_);
+  if (!sh) {
+    sh = ss.insertSheet(CONTRACT_ITEMS_SHEET_);
+    sh.getRange(1, 1, 1, 5).setValues([['계약번호', '구분', '내역(JSON)', '저장일시', '저장자']]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function apiGetContractItems_(contractNo) {
+  contractNo = Number(contractNo);
+  if (!contractNo) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONTRACT_ITEMS_SHEET_);
+  var items = {}, savedAt = {};
+  if (sh && sh.getLastRow() >= 2) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues().forEach(function (r) {
+      if (Number(r[0]) !== contractNo) return;
+      var kind = String(r[1] || '');
+      if (CONTRACT_ITEM_KINDS_.indexOf(kind) < 0) return;
+      try { items[kind] = JSON.parse(r[2] || '[]'); } catch (e) { items[kind] = []; }
+      var d = r[3];
+      savedAt[kind] = d instanceof Date ? Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') : String(d || '');
+    });
+  }
+  return jsonOut_({ ok: true, items: items, savedAt: savedAt });
+}
+
+function apiSaveContractItems_(payload, user) {
+  var p = payload || {};
+  var contractNo = Number(p.contractNo);
+  var kind = String(p.kind || '');
+  if (!contractNo) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
+  if (CONTRACT_ITEM_KINDS_.indexOf(kind) < 0) return errorOut_('알 수 없는 내역 구분입니다.', 'BAD_PARAM');
+  // items: { items:[...], summary?, filename? } (배열만 와도 허용)
+  var json = JSON.stringify(p.items != null ? p.items : []);
+  if (json.length > 49000) return errorOut_('내역이 너무 깁니다 (시트 한 칸 5만자 제한). 품목 수를 줄여 주세요.', 'TOO_LARGE');
+  var sh = getContractItemsSheet_();
+  var now = new Date();
+  var who = (user && user.name) || '';
+  var last = sh.getLastRow();
+  if (last >= 2) {
+    var vals = sh.getRange(2, 1, last - 1, 2).getValues();
+    for (var i = 0; i < vals.length; i++) {
+      if (Number(vals[i][0]) === contractNo && String(vals[i][1]) === kind) {
+        sh.getRange(i + 2, 3, 1, 3).setValues([[json, now, who]]);
+        return jsonOut_({ ok: true, savedAt: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') });
+      }
+    }
+  }
+  sh.appendRow([contractNo, kind, json, now, who]);
+  return jsonOut_({ ok: true, savedAt: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') });
 }
 
 // ============================================================
