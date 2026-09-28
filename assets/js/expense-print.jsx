@@ -384,20 +384,37 @@ function buildExpensePrintHtml(d) {
   const vendorBizNo = f.subBizNo || '';
   const vendorManager = f.subManager || '';
   const vendorTel = f.subManagerTel || '';
-  const vendorNameOf = (override) => (override && String(override).trim()) ? override : vendorName;
+  // 항목별 업체 정보: 업체를 지정하지 않으면 비움(지급 대상 업체 정보를 대신 쓰지 않음).
+  // 지정한 업체가 지급 대상 업체와 같으면 그 정보, 다르면 도급업체 목록에 저장된 그 업체 정보만 사용.
+  const _vn = (v) => String(v || '').replace(/\(주\)|㈜|주식회사|\s/g, '').toLowerCase();
+  const mainInfo = { name: vendorName === '-' ? '' : vendorName, bizNo: vendorBizNo, manager: vendorManager, tel: vendorTel, bank: f.subBank || '', account: f.subAccount || '', holder: f.subHolder || '' };
+  const infoOf = (name) => {
+    const n = String(name || '').trim();
+    if (!n) return { name: '', bizNo: '', manager: '', tel: '', bank: '', account: '', holder: '' };
+    if (mainInfo.name && _vn(n) === _vn(mainInfo.name)) return { ...mainInfo, name: n };
+    const s2 = (d.subcontractors || []).find(x => x && _vn(x.name) === _vn(n)) || {};
+    return { name: n, bizNo: s2.bizNo || '', manager: s2.manager || '', tel: s2.tel || '', bank: s2.bank || '', account: s2.account || '', holder: s2.holder || '' };
+  };
+  const vendorNameOf = (override) => infoOf(override).name;
+  const vendorInfoTable = (info) => `<table class="info" style="margin-bottom:2mm">
+      <colgroup><col style="width:22mm"><col><col style="width:22mm"><col></colgroup>
+      <tr><th>업체명</th><td class="l">${_pEsc(info.name || '-')}</td><th>사업자번호</th><td class="l" style="white-space:nowrap">${_pEsc(info.bizNo || '-')}</td></tr>
+      <tr><th>담당자</th><td class="l">${_pEsc(info.manager || '-')}</td><th>연락처</th><td class="l">${_pEsc(info.tel || '-')}</td></tr>
+      <tr><th>계좌번호</th><td class="l" colspan="3">${(info.bank || info.account) ? `${_pEsc(info.bank)} ${_pEsc(info.account)}${info.holder ? ` (예금주: ${_pEsc(info.holder)})` : ''}` : '-'}</td></tr>
+    </table>`;
   // 🆕 화면(v3) 카드 순서와 동일하게: 제품대 → 설치비 → 기타비용 → 영업수수료
   const vendorRows = [];
-  if (includeProduct && productCur > 0) vendorRows.push({ amt: productCur, note: '제품대', name: vendorNameOf(d.productVendorName) });
-  if (includeInstall && req > 0) vendorRows.push({ amt: req, note: '설치비', name: vendorName });
-  if (includeEtc && etcCur > 0) vendorRows.push({ amt: etcCur, note: '기타비용', name: vendorNameOf(d.etcVendorName) });
-  if (includeCommission && commissionCur > 0) vendorRows.push({ amt: commissionCur, note: '영업수수료', name: vendorNameOf(d.commissionVendorName) });
+  if (includeProduct && productCur > 0) vendorRows.push({ amt: productCur, note: '제품대', ...infoOf(d.productVendorName) });
+  if (includeInstall && req > 0) vendorRows.push({ amt: req, note: '설치비', ...infoOf(mainInfo.name) });
+  if (includeEtc && etcCur > 0) vendorRows.push({ amt: etcCur, note: '기타비용', ...infoOf(d.etcVendorName) });
+  if (includeCommission && commissionCur > 0) vendorRows.push({ amt: commissionCur, note: '영업수수료', ...infoOf(d.commissionVendorName) });
   const vendorTotal = vendorRows.reduce((s, r) => s + r.amt, 0);
   const vendorRowsHtml = vendorRows.map((r, i) => `
         <tr>
           <td class="c">${i + 1}</td>
-          <td class="l" style="white-space:nowrap">${_pEsc(r.name)}</td>
-          <td class="l" style="white-space:nowrap">${_pEsc(vendorBizNo || '-')}</td>
-          <td class="l" style="white-space:nowrap">${_pEsc(vendorManager || '-')}${vendorTel ? ` <span style="font-size:8pt;color:#555">(${_pEsc(vendorTel)})</span>` : ''}</td>
+          <td class="l" style="white-space:nowrap">${_pEsc(r.name || '-')}</td>
+          <td class="l" style="white-space:nowrap">${_pEsc(r.bizNo || '-')}</td>
+          <td class="l" style="white-space:nowrap">${_pEsc(r.manager || '-')}${r.tel ? ` <span style="font-size:8pt;color:#555">(${_pEsc(r.tel)})</span>` : ''}</td>
           <td class="r">${_pWon(r.amt)}</td>
           <td class="l">${_pEsc(r.note)}</td>
         </tr>`).join('');
@@ -517,48 +534,28 @@ function buildExpensePrintHtml(d) {
 
   <div class="sec sec-div">
     <h2><span class="num">1.</span>제품대<small>${includeProduct ? `제품대 총액 ${_pNum(productTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
-    <table class="info" style="margin-bottom:2mm">
-      <colgroup><col style="width:22mm"><col><col style="width:22mm"><col></colgroup>
-      <tr><th>업체명</th><td class="l">${_pEsc(vendorNameOf(d.productVendorName))}</td><th>사업자번호</th><td class="l" style="white-space:nowrap">${_pEsc(vendorBizNo || '-')}</td></tr>
-      <tr><th>담당자</th><td class="l">${_pEsc(vendorManager || '-')}</td><th>연락처</th><td class="l">${_pEsc(vendorTel || '-')}</td></tr>
-      <tr><th>계좌번호</th><td class="l" colspan="3">${_pEsc(f.subBank || '-')} ${_pEsc(f.subAccount || '')}${f.subHolder ? ` (예금주: ${_pEsc(f.subHolder)})` : ''}</td></tr>
-    </table>
+    ${vendorInfoTable(infoOf(d.productVendorName))}
     ${buildRoundHistoryTable(d.productRounds, productCur, includeProduct, productTotalBudget, docDate, roundLabel)}
     ${productItemsTable}
   </div>
 
   <div class="sec sec-div">
     <h2><span class="num">2.</span>설치비<small>${includeInstall ? `총금액 ${_pNum(installTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
-    <table class="info" style="margin-bottom:2mm">
-      <colgroup><col style="width:22mm"><col><col style="width:22mm"><col></colgroup>
-      <tr><th>업체명</th><td class="l">${_pEsc(vendorName)}</td><th>사업자번호</th><td class="l" style="white-space:nowrap">${_pEsc(vendorBizNo || '-')}</td></tr>
-      <tr><th>담당자</th><td class="l">${_pEsc(vendorManager || '-')}</td><th>연락처</th><td class="l">${_pEsc(vendorTel || '-')}</td></tr>
-      <tr><th>계좌번호</th><td class="l" colspan="3">${_pEsc(f.subBank || '-')} ${_pEsc(f.subAccount || '')}${f.subHolder ? ` (예금주: ${_pEsc(f.subHolder)})` : ''}</td></tr>
-    </table>
+    ${vendorInfoTable(infoOf(mainInfo.name))}
     ${buildRoundHistoryTable(d.rounds, req, includeInstall, installTotalBudget, docDate, roundLabel)}
     ${installItemsTable}
   </div>
 
   <div class="sec sec-div">
     <h2><span class="num">3.</span>기타비용<small>${includeEtc ? `기타비용 총액 ${_pNum(etcTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
-    <table class="info" style="margin-bottom:2mm">
-      <colgroup><col style="width:22mm"><col><col style="width:22mm"><col></colgroup>
-      <tr><th>업체명</th><td class="l">${_pEsc(vendorNameOf(d.etcVendorName))}</td><th>사업자번호</th><td class="l" style="white-space:nowrap">${_pEsc(vendorBizNo || '-')}</td></tr>
-      <tr><th>담당자</th><td class="l">${_pEsc(vendorManager || '-')}</td><th>연락처</th><td class="l">${_pEsc(vendorTel || '-')}</td></tr>
-      <tr><th>계좌번호</th><td class="l" colspan="3">${_pEsc(f.subBank || '-')} ${_pEsc(f.subAccount || '')}${f.subHolder ? ` (예금주: ${_pEsc(f.subHolder)})` : ''}</td></tr>
-    </table>
+    ${vendorInfoTable(infoOf(d.etcVendorName))}
     ${buildRoundHistoryTable(d.etcRounds, etcCur, includeEtc, etcTotalBudget, docDate, roundLabel)}
     ${etcItemsTable}
   </div>
 
   <div class="sec sec-div">
     <h2><span class="num">4.</span>영업수수료<small>${includeCommission ? `영업수수료 총액 ${_pNum(commissionTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
-    <table class="info" style="margin-bottom:2mm">
-      <colgroup><col style="width:22mm"><col><col style="width:22mm"><col></colgroup>
-      <tr><th>업체명</th><td class="l">${_pEsc(vendorNameOf(d.commissionVendorName))}</td><th>사업자번호</th><td class="l" style="white-space:nowrap">${_pEsc(vendorBizNo || '-')}</td></tr>
-      <tr><th>담당자</th><td class="l">${_pEsc(vendorManager || '-')}</td><th>연락처</th><td class="l">${_pEsc(vendorTel || '-')}</td></tr>
-      <tr><th>계좌번호</th><td class="l" colspan="3">${_pEsc(f.subBank || '-')} ${_pEsc(f.subAccount || '')}${f.subHolder ? ` (예금주: ${_pEsc(f.subHolder)})` : ''}</td></tr>
-    </table>
+    ${vendorInfoTable(infoOf(d.commissionVendorName))}
     ${buildRoundHistoryTable(d.commissionRounds, commissionCur, includeCommission, commissionTotalBudget, docDate, roundLabel)}
     ${commissionItemsTable}
   </div>
