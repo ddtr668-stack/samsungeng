@@ -420,11 +420,20 @@ function buildExpensePrintHtml(d) {
         </tr>`).join('');
 
   // ── 지급 내역 요약(1페이지) — 화면(v3) 카드 순서와 동일: 제품대 → 설치비 → 기타비용 → 영업수수료 ──
+  // 금액이 하나도 없는 항목(총액·금회·이전 지급 모두 0)은 출력물에서 뺀다 — 남은 항목만 1, 2, 3… 번호
+  const showCat = {
+    product:    productTotalBudget > 0 || (includeProduct && productCur > 0) || productPrevCum > 0,
+    install:    installTotalBudget > 0 || (includeInstall && req > 0) || installPrevCum > 0,
+    etc:        etcTotalBudget > 0 || (includeEtc && etcCur > 0) || etcPrevCum > 0,
+    commission: commissionTotalBudget > 0 || (includeCommission && commissionCur > 0) || commissionPrevCum > 0,
+  };
+  const catNo = {};
+  ['product', 'install', 'etc', 'commission'].filter(k => showCat[k]).forEach((k, i) => { catNo[k] = i + 1; });
   const summaryRowsHtml = [
-    buildSummaryRow(1, '제품대', productTotalBudget, productCur, productPrevCum, includeProduct),
-    buildSummaryRow(2, '설치비', installTotalBudget, req, installPrevCum, includeInstall),
-    buildSummaryRow(3, '기타비용', etcTotalBudget, etcCur, etcPrevCum, includeEtc),
-    buildSummaryRow(4, '영업수수료', commissionTotalBudget, commissionCur, commissionPrevCum, includeCommission),
+    showCat.product    ? buildSummaryRow(catNo.product, '제품대', productTotalBudget, productCur, productPrevCum, includeProduct) : '',
+    showCat.install    ? buildSummaryRow(catNo.install, '설치비', installTotalBudget, req, installPrevCum, includeInstall) : '',
+    showCat.etc        ? buildSummaryRow(catNo.etc, '기타비용', etcTotalBudget, etcCur, etcPrevCum, includeEtc) : '',
+    showCat.commission ? buildSummaryRow(catNo.commission, '영업수수료', commissionTotalBudget, commissionCur, commissionPrevCum, includeCommission) : '',
   ].join('');
 
   // ── 금회 요청금액(체크된 항목 합계) 안내 문구 (동일 순서) ──
@@ -523,42 +532,42 @@ function buildExpensePrintHtml(d) {
       <thead><tr><th>구분</th><th>금액(원)</th><th>산출 근거</th></tr></thead>
       <tbody>
         <tr><th>총 계약금액</th><td class="r">${_pNum(pnlSales)}</td><td class="l">계약금액 (VAT 포함)</td></tr>
-        <tr><th>(-) 제품대</th><td class="r">${_pNum(pnlProduct)}</td><td class="l">${productTotalBudget ? '계약관리 시트 제품대 (총액)' : (prod.length ? '제품 내역서 합계' : '-')}</td></tr>
-        <tr><th>(-) 설치비</th><td class="r">${_pNum(pnlInstall)}</td><td class="l">${installTotalBudget ? '계약관리 시트 도급금액 (총액)' : (inst.length ? '설치비 내역서 합계' : '-')}</td></tr>
-        <tr><th>(-) 기타비용</th><td class="r">${_pNum(pnlEtc)}</td><td class="l">${pnlEtc ? '계약관리 시트 부대비용' : '-'}</td></tr>
-        <tr><th>(-) 영업수수료</th><td class="r">${_pNum(pnlCom)}</td><td class="l">${pnlCom ? '계약관리 시트 영업비용' : '-'}</td></tr>
+        ${!showCat.product ? '' : `<tr><th>(-) 제품대</th><td class="r">${_pNum(pnlProduct)}</td><td class="l">${productTotalBudget ? '계약관리 시트 제품대 (총액)' : (prod.length ? '제품 내역서 합계' : '-')}</td></tr>`}
+        ${!showCat.install ? '' : `<tr><th>(-) 설치비</th><td class="r">${_pNum(pnlInstall)}</td><td class="l">${installTotalBudget ? '계약관리 시트 도급금액 (총액)' : (inst.length ? '설치비 내역서 합계' : '-')}</td></tr>`}
+        ${pnlEtc ? `<tr><th>(-) 기타비용</th><td class="r">${_pNum(pnlEtc)}</td><td class="l">계약관리 시트 부대비용</td></tr>` : ''}
+        ${pnlCom ? `<tr><th>(-) 영업수수료</th><td class="r">${_pNum(pnlCom)}</td><td class="l">계약관리 시트 영업비용</td></tr>` : ''}
         <tr class="total pnl-sum"><th>예상 손익</th><td class="r">${_neg(pnlProfit)}</td><td class="l">예상 수익률 ${pnlRate.toFixed(1)}%</td></tr>
       </tbody>
     </table>
   </div>
 
-  <div class="sec sec-div">
-    <h2><span class="num">1.</span>제품대<small>${includeProduct ? `제품대 총액 ${_pNum(productTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+  ${!showCat.product ? '' : `<div class="sec sec-div">
+    <h2><span class="num">${catNo.product}.</span>제품대<small>${includeProduct ? `제품대 총액 ${_pNum(productTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
     ${vendorInfoTable(infoOf(d.productVendorName))}
     ${buildRoundHistoryTable(d.productRounds, productCur, includeProduct, productTotalBudget, docDate, roundLabel)}
     ${productItemsTable}
-  </div>
+  </div>`}
 
-  <div class="sec sec-div">
-    <h2><span class="num">2.</span>설치비<small>${includeInstall ? `총금액 ${_pNum(installTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+  ${!showCat.install ? '' : `<div class="sec sec-div">
+    <h2><span class="num">${catNo.install}.</span>설치비<small>${includeInstall ? `총금액 ${_pNum(installTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
     ${vendorInfoTable(infoOf(mainInfo.name))}
     ${buildRoundHistoryTable(d.rounds, req, includeInstall, installTotalBudget, docDate, roundLabel)}
     ${installItemsTable}
-  </div>
+  </div>`}
 
-  <div class="sec sec-div">
-    <h2><span class="num">3.</span>기타비용<small>${includeEtc ? `기타비용 총액 ${_pNum(etcTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+  ${!showCat.etc ? '' : `<div class="sec sec-div">
+    <h2><span class="num">${catNo.etc}.</span>기타비용<small>${includeEtc ? `기타비용 총액 ${_pNum(etcTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
     ${vendorInfoTable(infoOf(d.etcVendorName))}
     ${buildRoundHistoryTable(d.etcRounds, etcCur, includeEtc, etcTotalBudget, docDate, roundLabel)}
     ${etcItemsTable}
-  </div>
+  </div>`}
 
-  <div class="sec sec-div">
-    <h2><span class="num">4.</span>영업수수료<small>${includeCommission ? `영업수수료 총액 ${_pNum(commissionTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
+  ${!showCat.commission ? '' : `<div class="sec sec-div">
+    <h2><span class="num">${catNo.commission}.</span>영업수수료<small>${includeCommission ? `영업수수료 총액 ${_pNum(commissionTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
     ${vendorInfoTable(infoOf(d.commissionVendorName))}
     ${buildRoundHistoryTable(d.commissionRounds, commissionCur, includeCommission, commissionTotalBudget, docDate, roundLabel)}
     ${commissionItemsTable}
-  </div>
+  </div>`}
   </div>`;
 
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">

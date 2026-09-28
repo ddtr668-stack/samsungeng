@@ -353,6 +353,16 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     } : { ...f, subName: name });
   };
 
+  // 업체명 아래 한 줄 정보 (대표자·사업자번호·계좌): 저장된 업체 목록에서 찾음
+  const vendorDetailOf = (name) => {
+    const n = String(name || '').trim();
+    if (!n) return null;
+    const v = ((data && data.subcontractors) || []).find(x => x && String(x.name || '').trim() === n);
+    return v ? { ceo: v.ceo, bizNo: v.bizNo, bank: v.bank, account: v.account, holder: v.holder } : null;
+  };
+  // 설치비는 지급 대상(도급업체) 칸에 입력된 값
+  const installVendorDetail = form.subName ? { ceo: form.subCeo, bizNo: form.subBizNo, bank: form.subBank, account: form.subAccount, holder: form.subHolder } : null;
+
   // 업체 드롭다운: 도급업체 관리에 저장된 업체 + 이전 지출품의서에서 쓴 업체명 + 이번 창에서 저장한 업체
   const vendorOptions = [...new Set([
     ...((data && data.subcontractors) || []).map(v => v && v.name),
@@ -1086,6 +1096,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="📦" name="제품대(장비대) 기성" accent="blue"
         toggle={{ checked: includeProduct, onChange: setIncludeProduct, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
+        vendorDetail={vendorDetailOf(productVendorName)}
         vendorValue={productVendorName} onVendorChange={setProductVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="제품대 지급 업체명" vendorLabel="제품대"
         onSaveVendor={() => handleSaveCategoryVendorName('product', productVendorName, '제품대')}
@@ -1175,6 +1186,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="🔧" name="설치비 기성" accent="green"
         toggle={{ checked: includeInstall, onChange: setIncludeInstall, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
+        vendorDetail={installVendorDetail}
         vendorValue={form.subName} onVendorChange={v => {
           const known = ((data && data.subcontractors) || []).some(x => x && String(x.name || '').trim() === String(v).trim());
           if (known) pickInstallVendor(String(v).trim()); else setForm({...form, subName: v});
@@ -1248,6 +1260,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="🧾" name="기타경비 기성" accent="bronze"
         toggle={{ checked: includeEtc, onChange: setIncludeEtc, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
+        vendorDetail={vendorDetailOf(etcVendorName)}
         vendorValue={etcVendorName} onVendorChange={setEtcVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="기타경비 지급 업체명" vendorLabel="기타경비"
         onSaveVendor={() => handleSaveCategoryVendorName('etc', etcVendorName, '기타경비')}
@@ -1270,6 +1283,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       <CategoryCard
         icon="💼" name="영업수수료 기성" accent="plum"
         toggle={{ checked: includeCommission, onChange: setIncludeCommission, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
+        vendorDetail={vendorDetailOf(commissionVendorName)}
         vendorValue={commissionVendorName} onVendorChange={setCommissionVendorName} vendorOptions={vendorOptions}
         vendorPlaceholder="영업수수료 지급 대상" vendorLabel="영업수수료"
         onSaveVendor={() => handleSaveCategoryVendorName('commission', commissionVendorName, '영업수수료')}
