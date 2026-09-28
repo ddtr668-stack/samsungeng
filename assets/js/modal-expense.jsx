@@ -275,16 +275,19 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 지출품의서이력 시트 L열(상태)에서 직접 "정상"으로 되돌리면 복구된다.
   const handleDeleteRound = async (r) => {
     if (!r?.no) return;
-    const msg = `${r.roundNo}차 · ${r.docDate || ''} · ${(Number(r.amount)||0).toLocaleString()}원\n이 회차 저장 기록을 삭제할까요? (설치비 기성 목록·전회 기성 이력에서 사라집니다)`;
+    const msg = `${r.roundNo}차 · ${r.docDate || ''} 지출품의서 저장 기록을 삭제할까요?\n\n이 회차의 제품대·설치비·기타경비·영업수수료 기록이 모두 누계와 전회 기성 이력에서 빠집니다.\n(잘못 저장한 경우 · 시트의 지출품의서이력 L열을 '정상'으로 바꾸면 복구)`;
     const ok = confirmDialog ? await confirmDialog(msg) : window.confirm(msg);
     if (!ok) return;
     setDeletingRound(r.no);
     try {
       await apiClient.cancelExpenseRound({ contractNo: contract.no, no: r.no });
       toast?.(`${r.roundNo}차 회차 삭제 완료`, 'success');
-      if (String(selectedRound) === String(r.no)) setSelectedRound('');
       const hist = await apiClient.expenseByContract(contract.no);
       setExpenseHistory(hist.history || []);
+      if (String(selectedRound) === String(r.no) || !selectedRound) {
+        setSelectedRound('');
+        setForm(f => ({ ...f, paymentCount: String(nextRoundNo(hist.history || [])) }));
+      }
     } catch (e) {
       toast?.('삭제 실패: ' + errMsg(e), 'error');
     } finally {
@@ -1014,6 +1017,16 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
             onSelect={handleRoundSelect}
           />
           {loadingHistory && <div style={{fontSize:11, color:'var(--ink-3)', marginTop:4}}>이력 불러오는 중…</div>}
+          {selectedRound && (() => {
+            const r = expenseHistory.find(h => String(h.no) === String(selectedRound));
+            return r && r.no ? (
+              <button type="button" onClick={() => handleDeleteRound(r)} disabled={deletingRound === r.no}
+                title="잘못 저장한 회차 기록 삭제"
+                style={{marginTop:6, padding:'4px 10px', fontSize:11, fontWeight:700, background:'#fff', color:'var(--neg, #B3452D)', border:'1px solid #E8C2B8', borderRadius:6, cursor: deletingRound === r.no ? 'wait' : 'pointer'}}>
+                {deletingRound === r.no ? '삭제 중…' : `🗑 ${r.roundNo}차 기록 삭제`}
+              </button>
+            ) : null;
+          })()}
         </div>
       </div>
       <div style={{fontSize:10.5, color:'var(--ink-3)', margin:'-2px 0 10px'}}>
@@ -1078,6 +1091,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         savingVendor={savingVendorCat === 'product'}
         totalAmount={contract.productCost}
         rounds={productRounds}
+        onDeleteRound={handleDeleteRound}
+        deletingNo={deletingRound}
         currentAmount={docCategory === 'product' ? docCatMeta.amount : productRequestAmount}
         onAmountChange={setProductAmount}
         currentRoundLabel={`${form.paymentCount}차`}
@@ -1237,6 +1252,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setEtcBudget}
         totalNote={Number(contract.incidental || 0) !== etcBudgetNum ? '(수정됨)' : '(계약관리 시트)'}
         rounds={etcRounds}
+        onDeleteRound={handleDeleteRound}
+        deletingNo={deletingRound}
         currentAmount={docCategory === 'etc' ? docCatMeta.amount : etcRequestAmount}
         onAmountChange={setEtcAmount}
         currentRoundLabel={`${form.paymentCount}차`}
@@ -1255,6 +1272,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         savingVendor={savingVendorCat === 'commission'}
         totalAmount={contract.salesCost}
         rounds={commissionRounds}
+        onDeleteRound={handleDeleteRound}
+        deletingNo={deletingRound}
         currentAmount={docCategory === 'commission' ? docCatMeta.amount : commissionRequestAmount}
         onAmountChange={setCommissionAmount}
         currentRoundLabel={`${form.paymentCount}차`}
