@@ -309,7 +309,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       paymentCount: String(r.roundNo || f.paymentCount),
       docDate: r.docDate || f.docDate,
       requestAmount: r.amount || 0,
-      note: r.note || f.note,
+      note: r.note || '',
       // 지급 대상(도급업체) 스냅샷도 함께 복원 (저장 시 함께 기록해둔 값)
       ...(r.subcontractor ? {
         subName: r.subcontractor,
@@ -341,6 +341,25 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setCommissionVendorName(r.commissionVendorName || '');
     setEtcVendorName(r.etcVendorName || '');
     setCatNotes({ ...EMPTY_NOTES, ...(r.catNotes || {}) });
+    setProductSummary(r.productSummary || null);
+    // 저장 당시 화면 상태 전체가 있으면 그대로 복원 (비고·비고사항·입력칸·토글·금액·업체명)
+    const snap = r.snapshot;
+    if (snap) {
+      if (snap.form) setForm(f => ({ ...f, ...snap.form, paymentCount: String(r.roundNo || snap.form.paymentCount || f.paymentCount) }));
+      if (snap.catNotes) setCatNotes({ ...EMPTY_NOTES, ...snap.catNotes });
+      ['includeInstall','includeProduct','includeCommission','includeEtc'].forEach(k => {
+        if (typeof snap[k] === 'boolean') ({ includeInstall: setIncludeInstall, includeProduct: setIncludeProduct, includeCommission: setIncludeCommission, includeEtc: setIncludeEtc })[k](snap[k]);
+      });
+      if (snap.docCategory) setDocCategory(snap.docCategory);
+      if (snap.productAmount !== undefined) setProductAmount(snap.productAmount);
+      if (snap.commissionAmount !== undefined) setCommissionAmount(snap.commissionAmount);
+      if (snap.etcAmount !== undefined) setEtcAmount(snap.etcAmount);
+      setProductVendorName(snap.productVendorName || '');
+      setCommissionVendorName(snap.commissionVendorName || '');
+      setEtcVendorName(snap.etcVendorName || '');
+      setProductFilename(snap.productFilename || '');
+      setInstallFilename(snap.installFilename || '');
+    }
     toast?.(`${r.roundNo}차 회차 데이터 복원됨${r.subcontractor ? ' (지급 대상 포함)' : ''}`, 'success');
   };
 
@@ -667,13 +686,31 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     docCategory, productAmount: productRequestAmount,
     productVendorName, commissionVendorName, etcVendorName,
     catNotes,
+    // 저장 당시 화면 상태 전체 — 차수를 다시 고르면 그대로 복원
+    snapshot: {
+      form: { ...form },
+      catNotes: { ...catNotes },
+      includeInstall, includeProduct, includeCommission, includeEtc,
+      docCategory, productAmount, commissionAmount, etcAmount,
+      productVendorName, commissionVendorName, etcVendorName,
+      productFilename, installFilename,
+    },
   });
 
   const handleSave = async () => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    const payload = buildPayload();
+    // 같은 차수에 이미 저장된 자료가 있으면 변경 저장 확인
+    const sameRound = expenseHistory.filter(h => h.status !== 'cancelled' && Number(h.roundNo) === Number(payload.roundNo));
+    if (sameRound.length) {
+      const ex = sameRound.find(h => String(h.no) === String(selectedRound)) || sameRound[sameRound.length - 1];
+      const msg = `${payload.roundNo}차에 이미 저장된 자료가 있습니다.\n(작성일 ${ex.docDate || '-'} · 설치비 ${Math.round(ex.amount || 0).toLocaleString()}원)\n\n현재 화면 내용으로 변경 저장할까요?`;
+      const ok = confirmDialog ? await confirmDialog(msg) : window.confirm(msg);
+      if (!ok) return;
+      payload.replaceNo = ex.no;
+    }
     setSaving(true);
     try {
-      const payload = buildPayload();
 
       // Drive 증빙 파일 업로드 (자격 증명 있을 때만)
       if (window.hasDriveCredentials?.() && (etcItems.length > 0 || commissionItems.length > 0)) {
@@ -715,16 +752,18 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       try {
         const res = await apiClient.saveExpense(payload);
         const syncedFields = res?.contractSync?.updated || [];
+        const head = `${payload.roundNo}차 ${res?.entry?.updated ? '변경 저장 완료' : '저장 완료'}`;
         toast?.(
           syncedFields.length
-            ? `지출품의서 저장 완료 (계약 금액 동기화: ${syncedFields.map(f => FIELD_LABELS_KO[f] || f).join(', ')})`
-            : '지출품의서 저장 완료',
+            ? `${head} (계약 금액 동기화: ${syncedFields.map(f => FIELD_LABELS_KO[f] || f).join(', ')})`
+            : head,
           'success'
         );
-        // 이력 재로드
+        // 이력 재로드 — 방금 저장한 차수를 드롭목록에 선택된 상태로
         try {
           const r = await apiClient.expenseByContract(contract.no);
           setExpenseHistory(r.history || []);
+          if (res?.entry?.no) setSelectedRound(String(res.entry.no));
         } catch { /* 이력 재로드 실패는 무시 */ }
         // 계약의 설치비/제품대/영업수수료/기타경비가 동기화됐을 수 있으므로
         // 대시보드 전체 데이터(계약 상세 화면 등)도 함께 새로고침
