@@ -448,6 +448,7 @@ const CategoryCard = ({
   vendorValue, onVendorChange, onSaveVendor, savingVendor, vendorPlaceholder, vendorLabel,
   vendorOptions,    // 저장된 업체 이름 목록 → 드롭다운에서 선택
   onVendorPick,     // 드롭다운에서 골랐을 때 (없으면 onVendorChange)
+  vendorDetail,     // { ceo, bizNo, bank, account, holder } — 업체명 아래 한 줄로 표시
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
   onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
@@ -563,6 +564,13 @@ const CategoryCard = ({
             >{savingVendor ? '저장 중…' : `💾 ${vendorLabel || ''} 업체정보 저장`}</button>
           )}
         </div>
+        {vendorDetail && (vendorDetail.ceo || vendorDetail.bizNo || vendorDetail.account) && (
+          <div style={{display:'flex', flexWrap:'wrap', gap:'4px 14px', margin:'-3px 0 9px', padding:'6px 10px', background:'#fff', border:`1px dashed ${a.line}`, borderRadius:6, fontSize:11.5, color:'var(--ink-2)'}}>
+            <span><span style={{color:'var(--ink-4)'}}>대표자</span> <b>{vendorDetail.ceo || '-'}</b></span>
+            <span><span style={{color:'var(--ink-4)'}}>사업자번호</span> <b>{vendorDetail.bizNo || '-'}</b></span>
+            <span><span style={{color:'var(--ink-4)'}}>계좌번호</span> <b>{[vendorDetail.bank, vendorDetail.account].filter(Boolean).join(' ') || '-'}</b>{vendorDetail.holder ? <span style={{color:'var(--ink-4)'}}> (예금주 {vendorDetail.holder})</span> : null}</span>
+          </div>
+        )}
 
         {tab === 'summary' ? (
           <>
