@@ -438,6 +438,7 @@ const CategoryCard = ({
   toggle,           // { checked, onChange, includeLabel, excludeLabel } — 4개 카드 모두 사용
   vendorValue, onVendorChange, onSaveVendor, savingVendor, vendorPlaceholder, vendorLabel,
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
+  onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
   detailTitle, detailActions, detailBanner,
   children,         // 상세내역 탭 — 내역서(ItemsTable) 등
@@ -446,7 +447,7 @@ const CategoryCard = ({
   const [tab, setTab] = React.useState(defaultTab);
   const included = !toggle || toggle.checked;
 
-  const total = totalAmount || 0;
+  const total = Number(totalAmount) || 0;
   let prevCum = 0;
   const rows = (rounds || []).map(r => {
     const amt = Number(r.amount) || 0;
@@ -546,8 +547,14 @@ const CategoryCard = ({
             <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, padding:'9px 10px', background:'#fff', border:`1px solid ${a.line}`, borderRadius:6, marginBottom:8}}>
               {[['총액', total], ['지급액(금회)', curAmt], ['누계', finalCum], ['잔액', balance]].map(([lb, v]) => (
                 <div key={lb}>
-                  <span style={{display:'block', fontSize:9, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.02em', marginBottom:2}}>{lb}</span>
-                  <span style={{fontWeight:800, fontSize:12, fontVariantNumeric:'tabular-nums', color: (lb==='지급액(금회)' && !included) ? 'var(--ink-4)' : 'var(--ink-1)'}}>{_fmtNum(v)}원</span>
+                  <span style={{display:'block', fontSize:9, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.02em', marginBottom:2}}>{lb}{lb === '총액' && totalNote ? <span style={{fontWeight:500, marginLeft:4}}>{totalNote}</span> : null}</span>
+                  {lb === '총액' && onTotalChange ? (
+                    <input type="number" value={totalAmount === '' || totalAmount == null ? '' : totalAmount}
+                      onChange={e => onTotalChange(e.target.value)} aria-label={`${name} 총액`}
+                      style={{width:'100%', maxWidth:130, padding:'3px 6px', border:`1px solid ${a.mid}`, borderRadius:5, fontSize:12, fontWeight:800, textAlign:'right', fontVariantNumeric:'tabular-nums', fontFamily:'inherit', background:'#fff'}}/>
+                  ) : (
+                    <span style={{fontWeight:800, fontSize:12, fontVariantNumeric:'tabular-nums', color: (lb==='지급액(금회)' && !included) ? 'var(--ink-4)' : 'var(--ink-1)'}}>{_fmtNum(v)}원</span>
+                  )}
                 </div>
               ))}
             </div>
@@ -649,11 +656,13 @@ function _roundBreakdown(r) {
     } catch { return 0; }
   };
   const hasNum = (v) => v !== undefined && v !== null && v !== '';
+  // 그 회차에 '이번 회차 포함'을 끈 항목은 지급하지 않은 것 → 0 (품목표는 참고용으로만 저장된 것)
+  const inc = (flag, dflt) => flag === undefined ? dflt : !!flag;
   return {
-    install: Number(r.amount) || 0, // 설치비(금회 요청금액)는 별도 보관된 값을 그대로 사용
-    product: hasNum(r.productAmount) ? Number(r.productAmount) || 0 : sum(r.productItems_JSON, 'qty'),
-    etc: hasNum(r.etcAmount) ? Number(r.etcAmount) || 0 : sum(r.expenseItems_JSON, 'amount'),
-    commission: hasNum(r.commissionAmount) ? Number(r.commissionAmount) || 0 : sum(r.commissionItems_JSON, 'amount'),
+    install: inc(r.includeInstall, true) ? (Number(r.amount) || 0) : 0, // 설치비(금회 요청금액)는 별도 보관된 값
+    product: !inc(r.includeProduct, false) ? 0 : (hasNum(r.productAmount) ? Number(r.productAmount) || 0 : sum(r.productItems_JSON, 'qty')),
+    etc: !inc(r.includeEtc, false) ? 0 : (hasNum(r.etcAmount) ? Number(r.etcAmount) || 0 : sum(r.expenseItems_JSON, 'amount')),
+    commission: !inc(r.includeCommission, false) ? 0 : (hasNum(r.commissionAmount) ? Number(r.commissionAmount) || 0 : sum(r.commissionItems_JSON, 'amount')),
   };
 }
 
