@@ -678,7 +678,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated, onSe
       <div className="detail-head">
         <div>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-            <span style={{fontSize:12,color:'var(--ink-3)',fontWeight:600,letterSpacing:'0.05em'}}>계약 {contractCode(c)}{c.managerCode && <span style={{fontWeight:500,opacity:.7,marginLeft:5}}>· 전체 #{String(c.no).padStart(4,'0')}</span>}</span>
+            <span style={{fontSize:12,color:'var(--ink-3)',fontWeight:600,letterSpacing:'0.05em'}}>계약 {contractCode(c)}{c.managerCode && <span style={{fontWeight:500,opacity:.7,marginLeft:5}}>· 시트 NO {c.sheetNo ?? c.no}</span>}</span>
             <CatTag cat={c.category}/>
             <StatusPill status={c.status}/>
           </div>
