@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-28-05 (회차 변경 저장·화면 전체 복원)';
+var BUILD_VERSION_ = '2026-09-30-01 (계약 고유ID · 번호 중복 분리)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -386,13 +386,8 @@ function applyContractPatch_(no, patch, categoryLabel) {
   if (!no) return { ok: false, error: '계약 번호가 필요합니다.', code: 'BAD_PARAM' };
 
   var sheet = getDbSheet_();
-  var lastRow = sheet.getLastRow();
-  var noValues = sheet.getRange(DATA_START_ROW, COL_MAP_.no, lastRow - DATA_START_ROW + 1, 1).getValues();
-
-  var targetRow = -1;
-  for (var i = 0; i < noValues.length; i++) {
-    if (Number(noValues[i][0]) === no) { targetRow = DATA_START_ROW + i; break; }
-  }
+  // 계약 NO 는 시트에서 중복될 수 있어(연도별 재시작 등) 고유ID 로 행을 찾는다
+  var targetRow = findContractRowByUid_(sheet, no);
   if (targetRow < 0) return { ok: false, error: '계약 행을 찾지 못했습니다: #' + no, code: 'NOT_FOUND' };
 
   var projectNameForLog = sheet.getRange(targetRow, COL_MAP_.projectName).getValue() || '';
@@ -557,6 +552,13 @@ function apiCreateContract_(payload, user) {
 
     var savedRow = sheet.getRange(newRow, 1, 1, DB_LAST_COL_).getValues()[0];
     var created = rowToContract_(savedRow);
+    // 새 행에도 고유ID 부여 → 이후 모든 기능은 고유ID 로 이 계약을 구분
+    var allRows = sheet.getRange(DATA_START_ROW, 1, newRow - DATA_START_ROW + 1, DB_LAST_COL_).getValues();
+    var allUids = ensureContractUids_(sheet, allRows);
+    created.sheetNo = newNo;
+    created.no = allUids[newRow - DATA_START_ROW] || newNo;
+    created.row = newRow;
+    newNo = created.no;
     // 담당자: 관리자가 지정하면 그 사람, 아니면 등록한 사람
     var managerName = (user && user.role === 'admin' && contract.manager) ? String(contract.manager).trim()
       : ((user && user.name) || SG_DEFAULT_MANAGER_);
@@ -613,14 +615,145 @@ function readContracts_() {
   if (lastRow < DATA_START_ROW) return [];
 
   var values = sheet.getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, DB_LAST_COL_).getValues();
+  var uids = ensureContractUids_(sheet, values);
   var out = [];
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
     if (row[0] === '' || row[0] == null) continue;
     var contract = rowToContract_(row);
-    if (contract.no > 0) out.push(contract);
+    if (contract.no > 0 && uids[i]) {
+      contract.sheetNo = contract.no;     // 시트에 적힌 NO (화면 표시용)
+      contract.no = uids[i];              // 고유ID — 지출품의서·수금·수정 등 모든 기능의 키
+      contract.row = DATA_START_ROW + i;
+      out.push(contract);
+    }
   }
   return out;
+}
+
+// ============================================================
+// 계약 고유ID — 계약관리 시트의 NO 는 연도마다 1부터 다시 시작하거나 같은 번호가
+// 두 번 쓰인 경우가 있어, 번호만으로는 프로젝트가 겹친다(지출품의서·수금·수정이 다른
+// 프로젝트로 들어감). 시트 오른쪽 빈 열에 "고유ID" 열을 만들어 행마다 겹치지 않는 번호를
+// 자동으로 적는다. 행을 정렬·삽입해도 번호가 행과 함께 움직이므로 연결이 유지된다.
+//  - 처음 부여할 때: 그 NO 를 처음 쓰는 행은 NO 그대로(기존 저장 기록과 연결 유지),
+//    같은 NO 를 다시 쓰는 행은 10001 부터 새 번호
+//  - 새 번호를 받은 행의 지출품의서 기록은 현장명이 같으면 새 번호로 옮김
+// ============================================================
+var CONTRACT_UID_HEADER_ = '고유ID';
+var CONTRACT_UID_BASE_ = 10000;
+var contractUidColCache_ = 0;
+
+function contractUidCol_(sheet) {
+  if (contractUidColCache_) return contractUidColCache_;
+  var hdrRow = Math.max(1, DATA_START_ROW - 1);
+  var lastCol = Math.max(sheet.getLastColumn(), DB_LAST_COL_);
+  var lastRow = sheet.getLastRow();
+  var col = 0;
+  if (lastCol > DB_LAST_COL_) {
+    var hdr = sheet.getRange(hdrRow, DB_LAST_COL_ + 1, 1, lastCol - DB_LAST_COL_).getValues()[0];
+    for (var i = 0; i < hdr.length; i++) {
+      if (String(hdr[i]).trim() === CONTRACT_UID_HEADER_) { contractUidColCache_ = DB_LAST_COL_ + 1 + i; return contractUidColCache_; }
+    }
+    // 머리글도 데이터도 비어 있는 첫 열을 사용 (다른 용도로 쓰는 열은 건드리지 않음)
+    for (var c = DB_LAST_COL_ + 1; c <= lastCol && !col; c++) {
+      if (String(hdr[c - DB_LAST_COL_ - 1]).trim() !== '') continue;
+      var empty = true;
+      if (lastRow >= DATA_START_ROW) {
+        var vals = sheet.getRange(DATA_START_ROW, c, lastRow - DATA_START_ROW + 1, 1).getValues();
+        for (var k = 0; k < vals.length; k++) { if (String(vals[k][0]).trim() !== '') { empty = false; break; } }
+      }
+      if (empty) col = c;
+    }
+  }
+  if (!col) col = lastCol + 1;
+  if (sheet.getMaxColumns() < col) sheet.insertColumnsAfter(sheet.getMaxColumns(), col - sheet.getMaxColumns());
+  sheet.getRange(hdrRow, col).setValue(CONTRACT_UID_HEADER_);
+  contractUidColCache_ = col;
+  return col;
+}
+
+// values: 계약관리 시트 DATA_START_ROW 부터의 행들 → 같은 순서의 고유ID 배열 (빈 행은 0)
+function ensureContractUids_(sheet, values) {
+  var n = values.length;
+  if (!n) return [];
+  var col = contractUidCol_(sheet);
+  var cur = sheet.getRange(DATA_START_ROW, col, n, 1).getValues();
+  var uids = [], used = {}, maxUsed = 0, changed = false;
+  for (var i = 0; i < n; i++) {
+    var u = Number(cur[i][0]) || 0;
+    var hasRow = !(values[i][0] === '' || values[i][0] == null) && (Number(values[i][COL_MAP_.no - 1]) || 0) > 0;
+    if (!hasRow) { uids.push(0); continue; }
+    if (u && used[u]) { u = 0; }             // 행 복사로 같은 고유ID 가 두 번 → 뒤쪽 행은 새로 부여
+    if (u) { used[u] = true; if (u > maxUsed) maxUsed = u; }
+    uids.push(u);
+  }
+  var fresh = [];
+  for (var j = 0; j < n; j++) {
+    if (uids[j]) continue;
+    var row = values[j];
+    if (row[0] === '' || row[0] == null) continue;
+    var no = Number(row[COL_MAP_.no - 1]) || 0;
+    if (!no) continue;
+    var uid;
+    if (!used[no]) {
+      uid = no;
+    } else {
+      uid = Math.max(CONTRACT_UID_BASE_, maxUsed) + 1;
+      fresh.push({ uid: uid, oldNo: no, name: String(row[COL_MAP_.projectName - 1] || '').trim() });
+    }
+    used[uid] = true;
+    if (uid > maxUsed) maxUsed = uid;
+    uids[j] = uid;
+    changed = true;
+  }
+  if (changed) {
+    sheet.getRange(DATA_START_ROW, col, n, 1).setValues(uids.map(function (u, idx) {
+      return [u || (cur[idx][0] === '' ? '' : cur[idx][0])];
+    }));
+    if (fresh.length) {
+      // 원래 번호를 계속 쓰는 행의 현장명 (같은 이름이면 기록을 옮기지 않음 — 구분 불가)
+      var keptName = {};
+      for (var q = 0; q < n; q++) {
+        var qn = Number(values[q][COL_MAP_.no - 1]) || 0;
+        if (qn && uids[q] === qn) keptName[qn] = String(values[q][COL_MAP_.projectName - 1] || '').trim();
+      }
+      try { migrateDuplicateNoRecords_(fresh, keptName); } catch (e) { /* 이전 기록 이동 실패는 무시 */ }
+    }
+  }
+  return uids;
+}
+
+// 같은 NO 를 쓰던 다른 프로젝트의 지출품의서 기록(O열 계약번호)을 현장명으로 구분해 새 고유ID 로 옮김
+function migrateDuplicateNoRecords_(fresh, keptName) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(expenseLogName_());
+  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < EXPENSE_EXT_FIRST_COL_) return;
+  var n = sheet.getLastRow() - 1;
+  var names = sheet.getRange(2, 3, n, 1).getValues();
+  var nos = sheet.getRange(2, EXPENSE_EXT_FIRST_COL_, n, 1).getValues();
+  var changed = false;
+  for (var i = 0; i < n; i++) {
+    var no = Number(nos[i][0]) || 0;
+    if (!no) continue;
+    var site = String(names[i][0] || '').trim();
+    for (var f = 0; f < fresh.length; f++) {
+      var fr = fresh[f];
+      if (fr.oldNo === no && fr.name && site === fr.name && keptName[no] !== fr.name) {
+        nos[i][0] = fr.uid; changed = true; break;
+      }
+    }
+  }
+  if (changed) sheet.getRange(2, EXPENSE_EXT_FIRST_COL_, n, 1).setValues(nos);
+}
+
+function findContractRowByUid_(sheet, uid) {
+  uid = Number(uid);
+  var lastRow = sheet.getLastRow();
+  if (!uid || lastRow < DATA_START_ROW) return -1;
+  var values = sheet.getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, DB_LAST_COL_).getValues();
+  var uids = ensureContractUids_(sheet, values);
+  for (var i = 0; i < uids.length; i++) { if (uids[i] === uid) return DATA_START_ROW + i; }
+  return -1;
 }
 
 function rowToContract_(row) {
@@ -1282,17 +1415,10 @@ function syncContractPaidAmount_(contractNo) {
   }
   // 계약관리 시트에서 해당 계약 행 찾아 paidAmount 업데이트
   var cSheet = getDbSheet_();
-  var cLastRow = cSheet.getLastRow();
-  if (cLastRow < DATA_START_ROW) return;
-  var noValues = cSheet.getRange(DATA_START_ROW, COL_MAP_.no, cLastRow - DATA_START_ROW + 1, 1).getValues();
-  for (var j = 0; j < noValues.length; j++) {
-    if (Number(noValues[j][0]) === contractNo) {
-      var row = DATA_START_ROW + j;
-      cSheet.getRange(row, COL_MAP_.paidAmount).setValue(total);
-      recomputeDerivedFields_(cSheet, row);
-      return;
-    }
-  }
+  var row = findContractRowByUid_(cSheet, contractNo);
+  if (row < 0) return;
+  cSheet.getRange(row, COL_MAP_.paidAmount).setValue(total);
+  recomputeDerivedFields_(cSheet, row);
 }
 
 // ═══════════════════════════════════════════════════════════════

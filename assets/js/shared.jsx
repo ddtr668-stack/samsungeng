@@ -17,7 +17,7 @@ function backdropClose(onClose) {
 const contractCode = (c) => {
   if (!c) return '';
   if (c.managerCode) return c.managerCode;
-  return '#' + String(c.no || '').padStart(4, '0');
+  return '#' + String(c.sheetNo ?? c.no ?? '').padStart(4, '0');
 };
 
 // ─── 담당자·기간으로 계약을 걸러 요약·통계를 다시 계산 (대시보드·리포트·각 목록 화면 공통) ───

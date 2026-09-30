@@ -48,7 +48,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
       if (month !== 'all' && (!c.contractDate || c.contractDate.substring(5,7) !== month)) return false;
       if (search) {
         const q = search.toLowerCase();
-        const hay = `${c.no} ${c.projectName} ${c.client} ${c.category} ${c.subcontractor||''} ${c.manager||''} ${c.managerCode||''}`.toLowerCase();
+        const hay = `${c.sheetNo ?? c.no} ${c.projectName} ${c.client} ${c.category} ${c.subcontractor||''} ${c.manager||''} ${c.managerCode||''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -97,8 +97,8 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
         <div className="hstack">
           <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
           <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('contracts',
-            ['계약번호','전체번호','계약일','담당자','구분','거래처','프로젝트명','도급업체','계약금','수금액','잔금','이윤','진행률','상태'],
-            sorted.map(c => [contractCode(c), c.no, c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.subcontractor || '', c.totalAmount, c.paidAmount, c.balance, c.profit, Math.round((c.progress || 0) * 100) + '%', c.status]))}>
+            ['계약번호','시트NO','계약일','담당자','구분','거래처','프로젝트명','도급업체','계약금','수금액','잔금','이윤','진행률','상태'],
+            sorted.map(c => [contractCode(c), c.sheetNo ?? c.no, c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.subcontractor || '', c.totalAmount, c.paidAmount, c.balance, c.profit, Math.round((c.progress || 0) * 100) + '%', c.status]))}>
             <Icon name="download" size={14}/>엑셀 내보내기</button>
         </div>
       </div>
@@ -195,7 +195,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
               )}
               {paged.map(c => (
                 <tr key={c.id ?? c.no} className="clickable" onClick={() => onSelectContract(c.id ?? c.no)}>
-                  <td className="tnum" style={{fontWeight:600,color:'var(--ink-2)',whiteSpace:'nowrap'}} title={`전체 번호 #${c.no}`}>{contractCode(c)}</td>
+                  <td className="tnum" style={{fontWeight:600,color:'var(--ink-2)',whiteSpace:'nowrap'}} title={`시트 NO ${c.sheetNo ?? c.no}`}>{contractCode(c)}</td>
                   <td className="num tnum">{fmtMonthShort(c.contractDate)}</td>
                   <td><CatTag cat={c.category}/></td>
                   <td style={{fontSize:12.5,color:'var(--ink-2)',fontWeight:500,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.client}</td>

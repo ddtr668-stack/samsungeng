@@ -117,7 +117,7 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
   // 엑셀 내보내기: 지금 대시보드에 집계된 계약 목록 (CSV · 엑셀에서 바로 열림)
   const exportCsv = () => {
     const cols = [
-      ['계약번호', c => contractCode(c)], ['전체번호', c => c.no], ['계약일', c => c.contractDate || ''],
+      ['계약번호', c => contractCode(c)], ['시트NO', c => c.sheetNo ?? c.no], ['계약일', c => c.contractDate || ''],
       ['담당자', c => c.manager || ''], ['구분', c => c.category || ''], ['거래처', c => c.client || ''],
       ['프로젝트명', c => c.projectName || ''], ['총 계약금', c => c.totalAmount || 0], ['수금액', c => c.paidAmount || 0],
       ['미수 잔금', c => c.balance || 0], ['영업이윤', c => c.profit || 0], ['상태', c => c.status || ''],

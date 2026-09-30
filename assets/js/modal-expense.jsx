@@ -209,9 +209,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     if (!open || !contract?.no) return;
     setPayments(null);
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) return;
+    let alive = true;
     apiClient.listPayments(contract.no)
-      .then(r => setPayments(r.payments || []))
-      .catch(e => { console.warn('[listPayments]', e); setPayments([]); });
+      .then(r => { if (alive) setPayments(r.payments || []); })
+      .catch(e => { console.warn('[listPayments]', e); if (alive) setPayments([]); });
+    return () => { alive = false; };
   }, [open, contract?.no]);
 
   // ─── 계약별 저장된 내역서 불러오기 (새 지출품의서 · 아직 비어있는 표만 채움) ───
@@ -283,18 +285,23 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     if (!open || !contract?.no) return;
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) return;
     setLoadingHistory(true);
+    setExpenseHistory([]);
+    let alive = true;   // 다른 계약으로 바뀐 뒤 늦게 온 응답이 덮어쓰지 않도록
     apiClient.expenseByContract(contract.no)
       .then(r => {
+        if (!alive) return;
         const hist = r.history || [];
         setExpenseHistory(hist);
         // 새 지출품의서는 '마지막 저장 회차 + 1' 차로 시작 (1차가 있으면 2차)
         setForm(f => ({ ...f, paymentCount: String(nextRoundNo(hist)) }));
       })
       .catch(e => {
+        if (!alive) return;
         console.warn('[expenseByContract]', e);
         setExpenseHistory([]);
       })
-      .finally(() => setLoadingHistory(false));
+      .finally(() => { if (alive) setLoadingHistory(false); });
+    return () => { alive = false; };
   }, [open, contract?.no]);
 
   // ─── 이전 회차 선택 시 자동 복원 ───
