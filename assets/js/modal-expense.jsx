@@ -448,20 +448,21 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 지금 작성 중인 회차(같은 회차번호)로 이미 저장된 기록은 '이전 지급'이 아님 → 제외
   // (같은 회차를 다시 열어 출력·재저장하면 금회 금액이 이전 누계에 한 번 더 더해지던 문제)
   const curRoundNo = Number(form.paymentCount) || 0;
-  const activeHistory = expenseHistory.filter(h => h.status !== 'cancelled' && Number(h.roundNo) !== curRoundNo);
+  // 수기 지급이력은 회차 번호가 같아도 항상 이전 지급으로 집계
+  const activeHistory = expenseHistory.filter(h => h.status !== 'cancelled' && (h.manual || Number(h.roundNo) !== curRoundNo));
   const breakdownOf = (h) => (window.expenseRoundBreakdown ? window.expenseRoundBreakdown(h) : { install: Number(h.amount) || 0, product: 0, commission: 0, etc: 0 });
   // 설치비도 '이번 회차 포함'을 끈 회차는 지급액 0
   const previousRounds = activeHistory
-    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).install, no: h.no }))
+    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).install, no: h.no, manual: h.manual, note: h.manual ? h.note : '' }))
     .filter(r => r.amount > 0);
   const productRounds = activeHistory
-    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).product, no: h.no }))
+    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).product, no: h.no, manual: h.manual, note: h.manual ? h.note : '' }))
     .filter(r => r.amount > 0);
   const commissionRounds = activeHistory
-    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).commission, no: h.no }))
+    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).commission, no: h.no, manual: h.manual, note: h.manual ? h.note : '' }))
     .filter(r => r.amount > 0);
   const etcRounds = activeHistory
-    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).etc, no: h.no }))
+    .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).etc, no: h.no, manual: h.manual, note: h.manual ? h.note : '' }))
     .filter(r => r.amount > 0);
 
   // 설치비 업체를 목록에서 고르면 지급 대상(도급업체) 정보도 그 업체로 채움 (계좌 오입금 방지: 없는 값은 빈칸)
@@ -711,6 +712,38 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     );
   };
 
+  // ─── 지급이력 수기 추가 (시스템 도입 전 지급 등 — 지출품의서 없이 지급 기록만) ───
+  const handleAddManual = (cat) => async ({ roundNo, docDate, amount, note }) => {
+    if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); throw new Error('no api'); }
+    const label = { install:'설치비', product:'제품대', etc:'기타경비', commission:'영업수수료' }[cat];
+    const vendor = cat === 'install' ? (form.subName || contract.subcontractor || '')
+      : ({ product: productVendorName, etc: etcVendorName, commission: commissionVendorName }[cat] || '');
+    try {
+      await apiClient.saveExpense({
+        contractNo: contract.no, roundNo, docDate, manual: true, manager: form.manager,
+        subcontractor: cat === 'install' ? vendor : (contract.subcontractor || ''),
+        amount: cat === 'install' ? amount : 0, prevProgress: 0,
+        includeInstall: cat === 'install', includeProduct: cat === 'product',
+        includeCommission: cat === 'commission', includeEtc: cat === 'etc',
+        productAmount: cat === 'product' ? amount : 0,
+        commission: cat === 'commission' ? amount : 0,
+        etcCost: cat === 'etc' ? amount : 0,
+        grandTotal: amount, docCategory: cat, note: note || '수기 입력',
+        catNotes: { [cat]: note || '' },
+        productVendorName: cat === 'product' ? vendor : '', commissionVendorName: cat === 'commission' ? vendor : '', etcVendorName: cat === 'etc' ? vendor : '',
+        installItems: [], productItems: [], expenseItems: [], commissionItems: [],
+      });
+      toast?.(`${label} ${roundNo}차 지급이력 추가 (${Math.round(amount).toLocaleString()}원)`, 'success');
+      const r = await apiClient.expenseByContract(contract.no);
+      const hist = r.history || [];
+      setExpenseHistory(hist);
+      if (!selectedRound) setForm(f => ({ ...f, paymentCount: String(nextRoundNo(hist)) }));
+    } catch (e) {
+      toast?.('지급이력 추가 실패: ' + errMsg(e), 'error');
+      throw e;
+    }
+  };
+
   // ─── 저장 / 출력 / PDF 다운로드 ───
   const buildPayload = () => ({
     contractNo: contract.no,
@@ -760,7 +793,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     const payload = buildPayload();
     // 같은 차수에 이미 저장된 자료가 있으면 변경 저장 확인
-    const sameRound = expenseHistory.filter(h => h.status !== 'cancelled' && Number(h.roundNo) === Number(payload.roundNo));
+    const sameRound = expenseHistory.filter(h => h.status !== 'cancelled' && !h.manual && Number(h.roundNo) === Number(payload.roundNo));
     if (sameRound.length) {
       const ex = sameRound.find(h => String(h.no) === String(selectedRound)) || sameRound[sameRound.length - 1];
       const msg = `${payload.roundNo}차에 이미 저장된 자료가 있습니다.\n(작성일 ${ex.docDate || '-'} · 설치비 ${Math.round(ex.amount || 0).toLocaleString()}원)\n\n현재 화면 내용으로 변경 저장할까요?`;
@@ -1297,6 +1330,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setProductBudget}
         totalNote={productBudgetNum !== (baseBudgets.product || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={productRounds}
+        onAddManual={handleAddManual('product')}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
         currentAmount={docCategory === 'product' ? docCatMeta.amount : productRequestAmount}
@@ -1397,6 +1431,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setInstallBudget}
         totalNote={installBudgetNum !== (baseBudgets.install || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={previousRounds}
+        onAddManual={handleAddManual('install')}
         currentAmount={docCategory === 'install' ? docCatMeta.amount : requestAmount}
         onAmountChange={v => setForm({...form, requestAmount: v})}
         currentRoundLabel={`${form.paymentCount}차`}
@@ -1458,6 +1493,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setEtcBudget}
         totalNote={etcBudgetNum !== (baseBudgets.etc || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={etcRounds}
+        onAddManual={handleAddManual('etc')}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
         currentAmount={docCategory === 'etc' ? docCatMeta.amount : etcRequestAmount}
@@ -1484,6 +1520,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setCommissionBudget}
         totalNote={commissionBudgetNum !== (baseBudgets.commission || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={commissionRounds}
+        onAddManual={handleAddManual('commission')}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
         currentAmount={docCategory === 'commission' ? docCatMeta.amount : commissionRequestAmount}
