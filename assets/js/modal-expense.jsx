@@ -241,6 +241,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setHistSavedAt({});
     savedRecordsRef.current = {};
     manualMaxRef.current = 0;
+    paidSyncedRef.current = null;
     if (typeof hasApiUrl !== 'function' || !hasApiUrl() || !apiClient.getContractItems) return;
     let alive = true;
     apiClient.getContractItems(contract.no)
@@ -319,6 +320,27 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     </button>
   );
 
+  // ─── 설치비 기성금액(계약 N열) = 저장된 지출품의서 설치비 + 수기 설치비 지급이력 합계 ───
+  const paidSyncedRef = useRef(null);   // 마지막으로 계약에 반영한 기성금액
+  const syncInstallPaid = async (hist, manualInstall) => {
+    if (typeof canEdit === 'function' && !canEdit()) return null;
+    const bd = (h) => (window.expenseRoundBreakdown ? window.expenseRoundBreakdown(h) : { install: Number(h.amount) || 0 });
+    const docSum = (hist || []).filter(h => h.status !== 'cancelled').reduce((sum, h) => sum + (bd(h).install || 0), 0);
+    const manual = manualInstall || ((savedRecordsRef.current.install || {}).history || []);
+    const manualSum = manual.reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
+    const total = Math.round(docSum + manualSum);
+    const current = paidSyncedRef.current ?? (Number(contract.subcontractPaid) || 0);
+    if (total === current) return null;
+    try {
+      await apiClient.updateContract(contract.no, { subcontractPaid: total });
+      paidSyncedRef.current = total;
+      return total;
+    } catch (e) {
+      toast?.('설치비 기성금액 반영 실패: ' + errMsg(e), 'error');
+      return null;
+    }
+  };
+
   // ─── 수기 지급이력 저장 (계약내역서 레코드의 history 만 바꾸고 품목 내역은 그대로) ───
   const handleSaveManual = async (kind) => {
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
@@ -336,7 +358,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       const maxManual = Math.max(0, ...Object.keys(savedRecordsRef.current).flatMap(k => ((savedRecordsRef.current[k] || {}).history || []).map(m => Number(m.roundNo) || 0)));
       manualMaxRef.current = maxManual;
       if (!selectedRound) setForm(f => ({ ...f, paymentCount: String(Math.max(nextRoundNo(expenseHistory), maxManual + 1)) }));
-      toast?.(`${label} 지급이력 저장 완료 (${history.length}건)`, 'success');
+      const paid = kind === 'install' ? await syncInstallPaid(expenseHistory, history) : null;
+      toast?.(`${label} 지급이력 저장 완료 (${history.length}건)${paid != null ? ` · 설치비 기성금액 ${paid.toLocaleString()}원 반영` : ''}`, 'success');
+      if (paid != null) onSaved?.()?.catch?.(() => {});
     } catch (e) {
       toast?.(`${label} 지급이력 저장 실패: ` + errMsg(e), 'error');
     } finally {
@@ -452,9 +476,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setDeletingRound(r.no);
     try {
       await apiClient.cancelExpenseRound({ contractNo: contract.no, no: r.no });
-      toast?.(`${r.roundNo}차 회차 삭제 완료`, 'success');
       const hist = await apiClient.expenseByContract(contract.no);
       setExpenseHistory(hist.history || []);
+      const paid = await syncInstallPaid(hist.history || []);
+      toast?.(`${r.roundNo}차 회차 삭제 완료${paid != null ? ` · 설치비 기성금액 ${paid.toLocaleString()}원으로 변경` : ''}`, 'success');
+      if (paid != null) onSaved?.()?.catch?.(() => {});
       if (String(selectedRound) === String(r.no) || !selectedRound) {
         setSelectedRound('');
         setForm(f => ({ ...f, paymentCount: String(nextRoundNo(hist.history || [])) }));
@@ -885,19 +911,22 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
           catch (e) { toast?.('계약 금액 반영 실패: ' + errMsg(e), 'error'); }
         }
         const head = `${payload.roundNo}차 ${res?.entry?.updated ? '변경 저장 완료' : '저장 완료'}`;
-        const synced = [...syncedFields.map(f => FIELD_LABELS_KO[f] || f), ...budgetLabels];
-        toast?.(
-          synced.length
-            ? `${head} (계약 금액 반영: ${[...new Set(synced)].join(', ')})`
-            : head,
-          'success'
-        );
-        // 이력 재로드 — 방금 저장한 차수를 드롭목록에 선택된 상태로
+        // 이력 재로드 — 방금 저장한 차수를 드롭목록에 선택된 상태로 + 설치비 기성금액(누계) 계약에 반영
+        let paid = null;
         try {
           const r = await apiClient.expenseByContract(contract.no);
           setExpenseHistory(r.history || []);
           if (res?.entry?.no) setSelectedRound(String(res.entry.no));
+          paid = await syncInstallPaid(r.history || []);
         } catch { /* 이력 재로드 실패는 무시 */ }
+        const synced = [...syncedFields.map(f => FIELD_LABELS_KO[f] || f), ...budgetLabels];
+        if (paid != null) synced.push(`설치비 기성금액 ${paid.toLocaleString()}원`);
+        toast?.(
+          synced.length
+            ? `${head} (계약 반영: ${[...new Set(synced)].join(', ')})`
+            : head,
+          'success'
+        );
         // 계약의 설치비/제품대/영업수수료/기타경비가 동기화됐을 수 있으므로
         // 대시보드 전체 데이터(계약 상세 화면 등)도 함께 새로고침
         onSaved?.().catch?.(() => {});
