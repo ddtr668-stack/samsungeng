@@ -263,9 +263,16 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
               style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:12}}
             />
             <div className="hint">
-              배포 → 새 배포 → 유형 "웹 앱" → 액세스 "모든 사용자" → 배포 URL 복사.
+              처음 한 번만: 배포 → 새 배포 → 유형 "웹 앱" → 액세스 "모든 사용자" → 배포 URL 복사.
               {' '}모든 브라우저 공통 주소는 <code>assets/config.js</code> 의 apiUrl 입니다{getConfigApiUrl() ? ' (등록됨)' : ' (미등록 · 여기서 저장하면 이 브라우저에만 적용)'}.
             </div>
+            {getConfigApiUrl() && url.trim() && url.trim() !== getConfigApiUrl() && (
+              <div style={{marginTop:6, padding:'7px 10px', background:'#FFF8E6', border:'1px solid #F0D9A0', borderRadius:6, fontSize:12, color:'#7A5320', lineHeight:1.55}}>
+                ⚠️ 이 주소는 공통 주소와 다릅니다 — 여기서 저장하면 <b>이 브라우저에만</b> 적용됩니다.
+                새 브라우저·다른 PC에서도 이 주소로 연결하려면 <code>assets/config.js</code> 의 apiUrl 을 바꿔야 합니다.
+                (주소가 바뀌지 않게 하려면 Apps Script 에서 "새 배포" 대신 <b>배포 관리 → ✏️ → 새 버전</b>으로 배포)
+              </div>
+            )}
           </div>
 
           <div className="hstack" style={{marginTop:16}}>
