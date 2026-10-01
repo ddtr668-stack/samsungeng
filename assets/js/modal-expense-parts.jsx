@@ -451,7 +451,8 @@ const CategoryCard = ({
   vendorDetail,     // { ceo, bizNo, bank, account, holder } — 업체명 아래 한 줄로 표시
   note, onNoteChange, // 항목별 비고(지급 사유) — 출력물 지급대상 비고·상세내역에 표시
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
-  onAddManual,      // (entry:{roundNo, docDate, amount, note}) => Promise — 과거 지급이력 수기 추가
+  // 수기 지급이력 — 표에서 바로 입력·수정하고 [지급이력 저장]
+  manualRows, onManualRowsChange, onSaveManual, savingManual, manualSavedAt,
   onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
   detailTitle, detailActions, detailBanner,
@@ -460,23 +461,6 @@ const CategoryCard = ({
   const a = ACCENT_THEME[accent] || ACCENT_THEME.green;
   const [tab, setTab] = React.useState(defaultTab);
   const included = !toggle || toggle.checked;
-  const [manualOpen, setManualOpen] = React.useState(false);
-  const [manualSaving, setManualSaving] = React.useState(false);
-  const [manual, setManual] = React.useState({ roundNo: '', docDate: '', amount: '', note: '' });
-  const openManual = () => {
-    const maxRound = (rounds || []).reduce((m, r) => Math.max(m, Number(r.roundNo) || 0), 0);
-    setManual({ roundNo: String(maxRound + 1), docDate: new Date().toISOString().slice(0, 10), amount: '', note: '' });
-    setManualOpen(true);
-  };
-  const submitManual = async () => {
-    if (!(Number(manual.amount) > 0)) { alert('지급금액을 입력하세요'); return; }
-    setManualSaving(true);
-    try {
-      await onAddManual({ roundNo: Number(manual.roundNo) || 1, docDate: manual.docDate, amount: Number(manual.amount) || 0, note: manual.note });
-      setManualOpen(false);
-    } catch (e) { /* 알림은 호출한 쪽에서 */ }
-    finally { setManualSaving(false); }
-  };
 
   const total = Number(totalAmount) || 0;
   let prevCum = 0;
@@ -487,6 +471,12 @@ const CategoryCard = ({
     const cumPct = total > 0 ? (prevCum / total * 100) : 0;
     return { ...r, amount: amt, pct, cumPct };
   });
+  const manualCalc = (manualRows || []).map(m => {
+    const amt = Number(m.amount) || 0;
+    prevCum += amt;
+    return { pct: total > 0 ? (amt / total * 100) : 0, cumPct: total > 0 ? (prevCum / total * 100) : 0 };
+  });
+  const histCount = rows.length + (manualRows || []).filter(m => Number(m.amount) > 0).length;
   const prevSum = prevCum;
   const curAmt = included ? (Number(currentAmount) || 0) : 0;
   const curPct = total > 0 ? (curAmt / total * 100) : 0;
@@ -619,7 +609,7 @@ const CategoryCard = ({
             </div>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:10}}>
               <span style={{fontSize:11, color:'var(--ink-3)', fontWeight:600}}>
-                {included ? `회차 이력 ${rows.length}건 (상세내역 탭에서 확인)` : '이번 회차 미포함 (포함하려면 위 토글을 체크)'}
+                {included ? `회차 이력 ${histCount}건 (상세내역 탭에서 확인)` : '이번 회차 미포함 (포함하려면 위 토글을 체크)'}
               </span>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <span style={{fontSize:11, color:'var(--ink-3)'}}>금회 요청</span>
@@ -640,63 +630,88 @@ const CategoryCard = ({
             <div style={{fontSize:10.5, fontWeight:800, color:a.strong, margin:'10px 0 5px', paddingTop:8, borderTop:`1px dashed ${a.line}`}}>
               회차별 지급 이력 ({name} 총액 {_fmtNum(total)}원 기준)
             </div>
-            <div style={{marginTop:0, padding:'8px 10px', background:'#fff', border:`1px solid ${a.line}`, borderRadius:6}}>
-              <div style={{display:'grid', gridTemplateColumns:'1.4fr 0.9fr 0.7fr 0.9fr 0.4fr', gap:6, fontSize:9.5, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.02em', paddingBottom:4, borderBottom:`1px dashed ${a.line}`}}>
-                <span>회차 · 지출일</span><span style={{textAlign:'right'}}>지급금액</span><span style={{textAlign:'right'}}>지급 %</span><span style={{textAlign:'right'}}>누적 %</span><span/>
-              </div>
-              {rows.length === 0 && (
-                <div style={{textAlign:'center', padding:'6px 0', fontSize:11, color:'var(--ink-3)', opacity:0.7}}>이전 지급 이력 없음</div>
-              )}
-              {rows.map(r => (
-                <div key={r.no || r.roundNo} style={{display:'grid', gridTemplateColumns:'1.4fr 0.9fr 0.7fr 0.9fr 0.4fr', gap:6, fontSize:11, padding:'4px 0', color:'var(--ink-3)', borderBottom:'1px dashed rgba(0,0,0,0.08)', alignItems:'center'}}>
-                  <span>{r.roundNo}차 · {_fmtDate(r.docDate)}{r.manual && <span title={r.note || '수기 입력'} style={{fontSize:8.5, background:'var(--ink-3)', color:'#fff', padding:'0 5px', borderRadius:8, marginLeft:4, fontWeight:700}}>수기</span>}</span>
-                  <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{_fmtNum(r.amount)}원</span>
-                  <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{r.pct.toFixed(1)}%</span>
-                  <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--ink-2)', fontWeight:700}}>{r.cumPct.toFixed(1)}%</span>
-                  <span style={{textAlign:'right'}}>
-                    {r.no && onDeleteRound && (
-                      <button type="button" title={`${r.roundNo}차 저장 기록 삭제`} onClick={() => onDeleteRound(r)} disabled={deletingNo === r.no}
-                        style={{border:'none', background:'none', cursor: deletingNo===r.no ? 'default':'pointer', color: deletingNo===r.no ? 'var(--ink-3)':'var(--neg, #B3452D)', fontSize:12, padding:'2px 4px', lineHeight:1}}>
-                        {deletingNo === r.no ? '···' : '🗑'}
+            {(() => {
+              const G = '0.6fr 0.55fr 1.05fr 1.05fr 0.6fr 0.6fr 1.6fr 0.3fr';
+              const inSt = { width:'100%', boxSizing:'border-box', padding:'3px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11, fontFamily:'inherit', background:'#fff' };
+              const tag = (txt, bg) => <span style={{fontSize:8.5, background:bg, color:'#fff', padding:'1px 6px', borderRadius:8, fontWeight:700}}>{txt}</span>;
+              const editable = !!onManualRowsChange;
+              const mrows = manualRows || [];
+              const setRow = (i, k, v) => onManualRowsChange(mrows.map((m, idx) => idx === i ? { ...m, [k]: v } : m));
+              const addRow = () => {
+                const maxRound = Math.max(0, ...rows.map(r => Number(r.roundNo) || 0), ...mrows.map(m => Number(m.roundNo) || 0));
+                onManualRowsChange([...mrows, { roundNo: String(maxRound + 1), docDate: new Date().toISOString().slice(0, 10), amount: '', note: '' }]);
+              };
+              return (<>
+                <div style={{marginTop:0, padding:'8px 10px', background:'#fff', border:`1px solid ${a.line}`, borderRadius:6}}>
+                  <div style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:9.5, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.02em', paddingBottom:4, borderBottom:`1px dashed ${a.line}`}}>
+                    <span>구분</span><span>회차</span><span>지급일</span><span style={{textAlign:'right'}}>지급금액</span><span style={{textAlign:'right'}}>지급 %</span><span style={{textAlign:'right'}}>누적 %</span><span>메모</span><span/>
+                  </div>
+                  {rows.length === 0 && mrows.length === 0 && (
+                    <div style={{textAlign:'center', padding:'6px 0', fontSize:11, color:'var(--ink-3)', opacity:0.7}}>이전 지급 이력 없음</div>
+                  )}
+                  {rows.map(r => (
+                    <div key={'d' + (r.no || r.roundNo)} style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:11, padding:'4px 0', color:'var(--ink-3)', borderBottom:'1px dashed rgba(0,0,0,0.08)', alignItems:'center'}}>
+                      <span>{r.manual ? tag('수기', 'var(--ink-3)') : tag('품의서', 'var(--green-800, #1f5c3a)')}</span>
+                      <span>{r.roundNo}차</span>
+                      <span>{_fmtDate(r.docDate)}</span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{_fmtNum(r.amount)}원</span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{r.pct.toFixed(1)}%</span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--ink-2)', fontWeight:700}}>{r.cumPct.toFixed(1)}%</span>
+                      <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.note || ''}</span>
+                      <span style={{textAlign:'right'}}>
+                        {r.no && onDeleteRound && (
+                          <button type="button" title={`${r.roundNo}차 저장 기록 삭제`} onClick={() => onDeleteRound(r)} disabled={deletingNo === r.no}
+                            style={{border:'none', background:'none', cursor: deletingNo===r.no ? 'default':'pointer', color: deletingNo===r.no ? 'var(--ink-3)':'var(--neg, #B3452D)', fontSize:12, padding:'2px 4px', lineHeight:1}}>
+                            {deletingNo === r.no ? '···' : '🗑'}
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                  {mrows.map((m, i) => (
+                    <div key={'m' + i} style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:11, padding:'3px 0', borderBottom:'1px dashed rgba(0,0,0,0.08)', alignItems:'center'}}>
+                      <span>{tag('수기', 'var(--ink-3)')}</span>
+                      <input type="number" min="1" value={m.roundNo} onChange={e => setRow(i, 'roundNo', e.target.value)} aria-label={`${name} 수기 ${i + 1} 회차`} style={{...inSt, textAlign:'right'}}/>
+                      <input type="date" value={m.docDate} onChange={e => setRow(i, 'docDate', e.target.value)} aria-label={`${name} 수기 ${i + 1} 지급일`} style={inSt}/>
+                      <input type="number" placeholder="지급금액" value={m.amount} onChange={e => setRow(i, 'amount', e.target.value)} aria-label={`${name} 수기 ${i + 1} 지급금액`} style={{...inSt, textAlign:'right', fontWeight:700}}/>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--ink-3)'}}>{manualCalc[i].pct.toFixed(1)}%</span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--ink-2)', fontWeight:700}}>{manualCalc[i].cumPct.toFixed(1)}%</span>
+                      <input type="text" placeholder="메모" value={m.note} onChange={e => setRow(i, 'note', e.target.value)} aria-label={`${name} 수기 ${i + 1} 메모`} style={inSt}/>
+                      <span style={{textAlign:'right'}}>
+                        <button type="button" title="이 줄 삭제 (저장해야 반영)" onClick={() => onManualRowsChange(mrows.filter((_, idx) => idx !== i))}
+                          style={{border:'none', background:'none', cursor:'pointer', color:'var(--neg, #B3452D)', fontSize:13, fontWeight:700, padding:'2px 4px', lineHeight:1}}>×</button>
+                      </span>
+                    </div>
+                  ))}
+                  {curAmt > 0 && (
+                    <div style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:11, padding:'6px 10px', margin:'2px -10px -1px', color:a.strong, fontWeight:800, background:`linear-gradient(90deg, ${a.line}88, transparent)`}}>
+                      <span/>
+                      <span>{currentRoundLabel || `${histCount + 1}차`}</span>
+                      <span>금회 요청 <span style={{fontSize:8.5, background:'var(--pos)', color:'#fff', padding:'0 5px', borderRadius:8, marginLeft:2, letterSpacing:'0.03em', fontWeight:800}}>NEW</span></span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>+ {_fmtNum(curAmt)}원</span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>+ {curPct.toFixed(1)}%</span>
+                      <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{finalPct.toFixed(1)}%</span>
+                      <span/><span/>
+                    </div>
+                  )}
+                </div>
+                {editable && (
+                  <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginTop:6}}>
+                    <button type="button" onClick={addRow}
+                      style={{padding:'5px 12px', fontSize:11, fontWeight:600, background:'#fff', color:a.strong, border:`1px dashed ${a.mid}`, borderRadius:5, cursor:'pointer'}}>
+                      + 지급이력 추가
+                    </button>
+                    <span style={{display:'flex', alignItems:'center', gap:8}}>
+                      {manualSavedAt && <span style={{fontSize:10, color:'var(--ink-3)'}}>마지막 저장 {String(manualSavedAt).slice(5)}</span>}
+                      <button type="button" onClick={onSaveManual} disabled={savingManual} aria-label={`${name} 지급이력 저장`}
+                        style={{padding:'5px 12px', fontSize:11, fontWeight:700, background: savingManual ? 'var(--surface-2)' : 'var(--green-800, #1f5c3a)', color: savingManual ? 'var(--ink-3)' : '#fff', border:0, borderRadius:5, cursor: savingManual ? 'wait' : 'pointer'}}>
+                        {savingManual ? '⏳ 저장 중...' : '💾 지급이력 저장'}
                       </button>
-                    )}
-                  </span>
-                </div>
-              ))}
-              {curAmt > 0 && (
-                <div style={{display:'grid', gridTemplateColumns:'1.4fr 0.9fr 0.7fr 0.9fr 0.4fr', gap:6, fontSize:11, padding:'6px 10px', margin:'2px -10px -1px', color:a.strong, fontWeight:800, background:`linear-gradient(90deg, ${a.line}88, transparent)`}}>
-                  <span>{currentRoundLabel || `${rows.length + 1}차`} · 금회 요청 <span style={{fontSize:8.5, background:'var(--pos)', color:'#fff', padding:'0 5px', borderRadius:8, marginLeft:4, letterSpacing:'0.03em', fontWeight:800}}>NEW</span></span>
-                  <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>+ {_fmtNum(curAmt)}원</span>
-                  <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>+ {curPct.toFixed(1)}%</span>
-                  <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{finalPct.toFixed(1)}%</span>
-                  <span/>
-                </div>
-              )}
-            </div>
-            {onAddManual && (manualOpen ? (
-              <div style={{display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, marginTop:6, padding:'8px 10px', background:'#fff', border:`1px dashed ${a.mid}`, borderRadius:6, fontSize:11}}>
-                <b style={{color:a.strong}}>지급이력 수기 추가</b>
-                <input type="number" min="1" value={manual.roundNo} onChange={e => setManual(m => ({ ...m, roundNo: e.target.value }))} aria-label={`${name} 수기 회차`}
-                  style={{width:52, padding:'4px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5, textAlign:'right'}}/>차
-                <input type="date" value={manual.docDate} onChange={e => setManual(m => ({ ...m, docDate: e.target.value }))} aria-label={`${name} 수기 지급일`}
-                  style={{padding:'3px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5}}/>
-                <input type="number" placeholder="지급금액" value={manual.amount} onChange={e => setManual(m => ({ ...m, amount: e.target.value }))} aria-label={`${name} 수기 지급금액`}
-                  style={{width:120, padding:'4px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5, textAlign:'right', fontWeight:700}}/>
-                <input type="text" placeholder="메모 (예: 시스템 도입 전 지급)" value={manual.note} onChange={e => setManual(m => ({ ...m, note: e.target.value }))} aria-label={`${name} 수기 메모`}
-                  style={{flex:1, minWidth:140, padding:'4px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5}}/>
-                <button type="button" onClick={submitManual} disabled={manualSaving}
-                  style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:a.strong, color:'#fff', border:0, borderRadius:5, cursor: manualSaving ? 'wait' : 'pointer'}}>
-                  {manualSaving ? '저장 중…' : '추가'}
-                </button>
-                <button type="button" onClick={() => setManualOpen(false)} disabled={manualSaving}
-                  style={{padding:'4px 8px', fontSize:11, background:'#fff', color:'var(--ink-2)', border:'1px solid var(--line)', borderRadius:5, cursor:'pointer'}}>취소</button>
-              </div>
-            ) : (
-              <button type="button" onClick={openManual}
-                style={{marginTop:6, padding:'5px 12px', fontSize:11, fontWeight:600, background:'#fff', color:a.strong, border:`1px dashed ${a.mid}`, borderRadius:5, cursor:'pointer'}}>
-                + 지급이력 추가 (수기)
-              </button>
-            ))}
+                    </span>
+                  </div>
+                )}
+              </>);
+            })()}
             {/* 진행바 */}
             <div style={{height:9, background:'#fff', border:`1px solid ${a.line}`, borderRadius:20, overflow:'hidden', position:'relative', margin:'10px 0 4px'}}>
               {prevBarPct > 0 && <div style={{position:'absolute', top:0, left:0, width:prevBarPct+'%', height:'100%', background:a.mid, borderRight:'1px solid #fff'}}/>}
