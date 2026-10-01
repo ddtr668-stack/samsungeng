@@ -111,7 +111,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const [etcAmount, setEtcAmount] = useState('');
   // 기타경비 총액: 계약관리 시트 값(incidental)을 불러와 화면에서 수정 가능
   const [etcBudget, setEtcBudget] = useState('');
-  const [savingEtcBudget, setSavingEtcBudget] = useState(false);
+  const [savingBudgetKey, setSavingBudgetKey] = useState(null);
+  // 제품대·설치비 총액도 화면에서 수정 → 계약(계약관리 시트)에 반영
+  const [productBudget, setProductBudget] = useState('');
+  const [installBudget, setInstallBudget] = useState('');
+  const [baseBudgets, setBaseBudgets] = useState({ product: 0, install: 0, etc: 0 });   // 계약에 저장된 값
   const [savedVendorNames, setSavedVendorNames] = useState([]);   // 이번 창에서 새로 저장한 업체
   // 🆕 v3: 항목별 기성 카드마다 별도로 지정할 수 있는 업체명(지급대상이 카테고리별로 다를 때)
   const [productVendorName, setProductVendorName] = useState('');
@@ -186,6 +190,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setCommissionAmount('');
     setEtcAmount('');
     setEtcBudget(contract?.incidental ? String(contract.incidental) : '');
+    setProductBudget(contract?.productCost ? String(contract.productCost) : '');
+    setInstallBudget(contract?.subcontractAmount ? String(contract.subcontractAmount) : '');
+    setBaseBudgets({ product: Number(contract?.productCost) || 0, install: Number(contract?.subcontractAmount) || 0, etc: Number(contract?.incidental) || 0 });
     setProductVendorName('');
     setCommissionVendorName('');
     setCatNotes(EMPTY_NOTES);
@@ -414,6 +421,14 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const productRequestAmount = productAmount !== '' ? (Number(productAmount) || 0) : productTotal;
   const commissionRequestAmount = commissionAmount !== '' ? (Number(commissionAmount) || 0) : commissionTotal;
   const etcBudgetNum = Number(etcBudget) || 0;
+  const productBudgetNum = Number(productBudget) || 0;
+  const installBudgetNum = Number(installBudget) || 0;
+  const BUDGET_META = {
+    product: { field: 'productCost', label: '제품대', value: productBudgetNum },
+    install: { field: 'subcontractAmount', label: '설치비(도급금액)', value: installBudgetNum },
+    etc:     { field: 'incidental', label: '기타경비', value: etcBudgetNum },
+  };
+  const changedBudgetKeys = Object.keys(BUDGET_META).filter(k => BUDGET_META[k].value !== (baseBudgets[k] || 0));
   const etcRequestAmount = etcAmount !== '' ? (Number(etcAmount) || 0) : etcTotal;
   // 🆕 금회 요청금액(지급 총액) = 체크된 항목(설치비/제품대/영업수수료/기타경비)만 합산.
   // 체크를 끄면 해당 항목의 품목·금액은 그대로 남아있어도(참고용) 이번 회차 청구·요약에서는 빠진다.
@@ -659,6 +674,39 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     } finally { setImporting(null); }
   };
 
+  // ─── 계약 총액(제품대·설치비·기타경비) 계약관리 시트에 반영 ───
+  const saveBudgets = async (keys, { silent } = {}) => {
+    if (!keys.length) return [];
+    const patch = {};
+    keys.forEach(k => { patch[BUDGET_META[k].field] = BUDGET_META[k].value; });
+    await apiClient.updateContract(contract.no, patch);
+    setBaseBudgets(b => { const n = { ...b }; keys.forEach(k => { n[k] = BUDGET_META[k].value; }); return n; });
+    const labels = keys.map(k => BUDGET_META[k].label);
+    if (!silent) { toast?.(`계약 ${labels.join('·')} 금액을 저장했습니다`, 'success'); onSaved?.()?.catch?.(() => {}); }
+    return labels;
+  };
+  const budgetBanner = (k, extra) => {
+    const m = BUDGET_META[k];
+    const changed = m.value !== (baseBudgets[k] || 0);
+    const editable = typeof canEdit !== 'function' || canEdit();
+    if (!(changed && editable) && !extra) return null;
+    return (
+      <div style={{display:'flex', alignItems:'center', gap:8, margin:'0 0 8px', padding:'7px 10px', background:'#FFF8E6', border:'1px solid #F0D9A0', borderRadius:6, fontSize:11.5, flexWrap:'wrap'}}>
+        {changed && editable ? (<>
+          <span style={{flex:1, minWidth:220}}>{m.label} 총액 {(baseBudgets[k] || 0).toLocaleString()}원 → <b>{m.value.toLocaleString()}원</b> (출력물에는 바로 반영 · 지출품의서 [저장] 시 계약에도 반영)</span>
+          <button type="button" disabled={!!savingBudgetKey} onClick={async () => {
+            setSavingBudgetKey(k);
+            try { await saveBudgets([k]); } catch (e) { toast?.('저장 실패: ' + errMsg(e), 'error'); }
+            finally { setSavingBudgetKey(null); }
+          }} style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:'var(--bronze-600, #8f6d3a)', color:'#fff', border:0, borderRadius:5, cursor:'pointer'}}>
+            {savingBudgetKey === k ? '저장 중…' : '지금 계약에 저장'}
+          </button>
+        </>) : <span style={{flex:1}}/>}
+        {extra}
+      </div>
+    );
+  };
+
   // ─── 저장 / 출력 / PDF 다운로드 ───
   const buildPayload = () => ({
     contractNo: contract.no,
@@ -759,10 +807,17 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       try {
         const res = await apiClient.saveExpense(payload);
         const syncedFields = res?.contractSync?.updated || [];
+        // 화면에서 고친 제품대·설치비·기타경비 총액을 계약(상세 화면 금액)에도 반영
+        let budgetLabels = [];
+        if (changedBudgetKeys.length && (typeof canEdit !== 'function' || canEdit())) {
+          try { budgetLabels = await saveBudgets(changedBudgetKeys, { silent: true }); }
+          catch (e) { toast?.('계약 금액 반영 실패: ' + errMsg(e), 'error'); }
+        }
         const head = `${payload.roundNo}차 ${res?.entry?.updated ? '변경 저장 완료' : '저장 완료'}`;
+        const synced = [...syncedFields.map(f => FIELD_LABELS_KO[f] || f), ...budgetLabels];
         toast?.(
-          syncedFields.length
-            ? `${head} (계약 금액 동기화: ${syncedFields.map(f => FIELD_LABELS_KO[f] || f).join(', ')})`
+          synced.length
+            ? `${head} (계약 금액 반영: ${[...new Set(synced)].join(', ')})`
             : head,
           'success'
         );
@@ -800,7 +855,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 화면 입력값을 A4 세로 인쇄용 독립 문서(HTML)로 변환
   const buildPrintHtml = () => window.buildExpensePrintHtml({
     // 기타경비 총액은 화면에서 수정한 값으로 출력
-    contract: { ...contract, incidental: etcBudgetNum }, form,
+    contract: { ...contract, incidental: etcBudgetNum, productCost: productBudgetNum, subcontractAmount: installBudgetNum }, form,
     subcontractors: (data && data.subcontractors) || [],   // 항목별 업체 정보 조회용
     koreanAmount: numberToKoreanAmount(grandTotal),
     requestAmount, etcTotal: etcRequestAmount, commissionTotal: commissionRequestAmount, grandTotal,
@@ -1216,6 +1271,15 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       </div>
 
       {/* 1. 제품대(장비대) 기성 */}
+      {budgetBanner('product', productTotal > 0 && Math.round(productTotal) !== productBudgetNum ? (
+        <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+          제품 내역서 합계 <b>{Math.round(productTotal).toLocaleString()}원</b>
+          <button type="button" onClick={() => setProductBudget(String(Math.round(productTotal)))}
+            style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
+            제품대 총액에 적용
+          </button>
+        </span>
+      ) : null)}
       <CategoryCard
         icon="📦" name="제품대(장비대) 기성" accent="blue"
         toggle={{ checked: includeProduct, onChange: setIncludeProduct, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
@@ -1225,7 +1289,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         vendorPlaceholder="제품대 지급 업체명" vendorLabel="제품대"
         onSaveVendor={() => handleSaveCategoryVendorName('product', productVendorName, '제품대')}
         savingVendor={savingVendorCat === 'product'}
-        totalAmount={contract.productCost}
+        totalAmount={productBudget}
+        onTotalChange={setProductBudget}
+        totalNote={productBudgetNum !== (baseBudgets.product || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={productRounds}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
@@ -1308,6 +1374,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       </CategoryCard>
 
       {/* 2. 설치비 기성 */}
+      {budgetBanner('install')}
       <CategoryCard
         icon="🔧" name="설치비 기성" accent="green"
         toggle={{ checked: includeInstall, onChange: setIncludeInstall, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
@@ -1322,7 +1389,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         vendorPlaceholder="설치비 지급 업체명" vendorLabel="설치비"
         onSaveVendor={handleSaveFullVendor}
         savingVendor={savingVendorCat === 'install'}
-        totalAmount={contract.subcontractAmount}
+        totalAmount={installBudget}
+        onTotalChange={setInstallBudget}
+        totalNote={installBudgetNum !== (baseBudgets.install || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={previousRounds}
         currentAmount={docCategory === 'install' ? docCatMeta.amount : requestAmount}
         onAmountChange={v => setForm({...form, requestAmount: v})}
@@ -1371,19 +1440,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       </CategoryCard>
 
       {/* 3. 기타경비 기성 */}
-      {Number(contract.incidental || 0) !== etcBudgetNum && (typeof canEdit !== 'function' || canEdit()) && (
-        <div style={{display:'flex', alignItems:'center', gap:8, margin:'0 0 8px', padding:'7px 10px', background:'#FFF8E6', border:'1px solid #F0D9A0', borderRadius:6, fontSize:11.5}}>
-          <span style={{flex:1}}>기타경비 총액을 {Number(contract.incidental || 0).toLocaleString()}원 → <b>{etcBudgetNum.toLocaleString()}원</b>으로 바꿨습니다. (출력물에는 바로 반영)</span>
-          <button type="button" disabled={savingEtcBudget} onClick={async () => {
-            setSavingEtcBudget(true);
-            try { await apiClient.updateContract(contract.no, { incidental: etcBudgetNum }); toast?.('계약관리 시트 기타경비를 저장했습니다', 'success'); await onSaved?.(); }
-            catch (e) { toast?.('저장 실패: ' + errMsg(e), 'error'); }
-            finally { setSavingEtcBudget(false); }
-          }} style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:'var(--bronze-600, #8f6d3a)', color:'#fff', border:0, borderRadius:5, cursor:'pointer'}}>
-            {savingEtcBudget ? '저장 중…' : '계약관리 시트에 저장'}
-          </button>
-        </div>
-      )}
+      {budgetBanner('etc')}
       <CategoryCard
         icon="🧾" name="기타경비 기성" accent="bronze"
         toggle={{ checked: includeEtc, onChange: setIncludeEtc, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
@@ -1395,7 +1452,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         savingVendor={savingVendorCat === 'etc'}
         totalAmount={etcBudget}
         onTotalChange={setEtcBudget}
-        totalNote={Number(contract.incidental || 0) !== etcBudgetNum ? '(수정됨)' : '(계약관리 시트)'}
+        totalNote={etcBudgetNum !== (baseBudgets.etc || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={etcRounds}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
