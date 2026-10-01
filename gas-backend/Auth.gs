@@ -173,7 +173,7 @@ var SG_WRITE_ROUTES_ = ['update', 'create', 'saveClient', 'saveSubcontractor', '
   'createPayment', 'updatePayment', 'deletePayment', 'saveExpense', 'cancelExpenseRound', 'saveContractItems'];
 // 관리자 전용
 var SG_ADMIN_ROUTES_ = ['saveAppSettings', 'backupSettings', 'saveBackupSettings', 'backupList',
-  'runBackupNow', 'restoreBackup', 'users', 'updateUser', 'deleteUser', 'setManager'];
+  'runBackupNow', 'restoreBackup', 'users', 'updateUser', 'deleteUser', 'setManager', 'correctExpenseRound'];
 
 function SG_checkPermission_(route, user) {
   if (SG_ADMIN_ROUTES_.indexOf(route) >= 0 && user.role !== 'admin') return '관리자만 사용할 수 있는 기능입니다.';
@@ -196,7 +196,7 @@ function SG_contractNoOf_(route, params, payload) {
   if (route === 'update') return p.no;
   if (route === 'payments' || route === 'expenseByContract' || route === 'contractItems') return params.contractNo || p.contractNo;
   if (route === 'saveContractItems') return p.contractNo;
-  if (route === 'createPayment' || route === 'updatePayment' || route === 'saveExpense' || route === 'cancelExpenseRound') return p.contractNo;
+  if (route === 'createPayment' || route === 'updatePayment' || route === 'saveExpense' || route === 'cancelExpenseRound' || route === 'correctExpenseRound') return p.contractNo;
   return null;
 }
 

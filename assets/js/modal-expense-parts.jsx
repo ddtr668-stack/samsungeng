@@ -738,6 +738,340 @@ const CategoryCard = ({
 window.CategoryCard = CategoryCard;
 
 // ═══════════════════════════════════════════════════════════════
+// 3-2. 항목 한 줄(Linear 스타일) — v3.17
+//   닫힌 상태: [포함 체크] ● 항목명 · 업체 · 두 톤 진행막대(지난 회차 진하게 / 이번 회차 연하게) · 기성률 · 금회 금액
+//   펼친 상태: 기성 6칸(배정액·전회 누계·금회·금회 누계·잔액·기성률) → 회차 이력(관리자 정정) →
+//             업체·비고 → 내역서 → 지급이력 직접 입력(수기 표)
+//   CategoryCard 와 같은 props 를 받으므로 화면 동작(저장·삭제·수기 이력 등)은 그대로다.
+// ═══════════════════════════════════════════════════════════════
+const EXPENSE_CAT_COLOR = { product:'#3E7CAE', install:'#2F7A55', etc:'#B8873B', commission:'#8862B8' };
+window.EXPENSE_CAT_COLOR = EXPENSE_CAT_COLOR;
+
+// 항목별 누계 계산 (화면 한 줄 · 상단 요약 · 결재 전 확인에서 같은 값 사용)
+function computeCategoryStats({ totalAmount, rounds, manualRows, included, currentAmount }) {
+  const total = Number(totalAmount) || 0;
+  const docSum = (rounds || []).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const manualSum = (manualRows || []).reduce((s, m) => s + (Number(m.amount) || 0), 0);
+  const prevSum = docSum + manualSum;
+  const curAmt = included ? (Number(currentAmount) || 0) : 0;
+  const finalCum = prevSum + curAmt;
+  const pctOf = (v) => total > 0 ? (v / total * 100) : 0;
+  const prevBarPct = Math.min(pctOf(prevSum), 100);
+  return {
+    total, prevSum, curAmt, finalCum,
+    balance: total - finalCum,
+    prevPct: pctOf(prevSum), finalPct: pctOf(finalCum),
+    prevBarPct, curBarPct: Math.min(pctOf(curAmt), 100 - prevBarPct),
+    over: total > 0 && finalCum > total + 0.5,
+  };
+}
+window.computeCategoryStats = computeCategoryStats;
+
+const _pctTxt = (v) => {
+  const n = Number(v) || 0;
+  return (Math.abs(n - Math.round(n)) < 0.05 ? Math.round(n) : n.toFixed(1)) + '%';
+};
+
+const CategoryRow = ({
+  catKey, name, color,
+  open, onToggleOpen,
+  toggle,
+  vendorValue, onVendorChange, onSaveVendor, savingVendor, vendorPlaceholder, vendorLabel,
+  vendorOptions, onVendorPick, vendorDetail,
+  note, onNoteChange,
+  totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, currentDate, onDeleteRound, deletingNo,
+  manualRows, onManualRowsChange, onSaveManual, savingManual, manualSavedAt,
+  onTotalChange, totalNote,
+  corrections, canCorrect, onCorrect,   // 회차 정정 (관리자) — onCorrect(payload) => Promise
+  banner,                               // 총액 변경 안내 등 (펼친 영역 맨 위)
+  detailTitle, detailActions, detailBanner,
+  children,
+}) => {
+  const c = color || '#2F7A55';
+  const light = c + '59';
+  const included = !toggle || toggle.checked;
+  const st = computeCategoryStats({ totalAmount, rounds, manualRows, included, currentAmount });
+  const ORANGE = 'var(--danger)';
+  const [editKey, setEditKey] = React.useState(null);
+  const [draft, setDraft] = React.useState({ docDate: '', amount: '', reason: '' });
+  const [err, setErr] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  // 지난 회차(품의서 + 수기)를 회차·날짜 순으로
+  const past = [
+    ...(rounds || []).map(r => ({ key: 'd' + (r.no || r.roundNo), kind: 'doc', no: r.no, roundNo: Number(r.roundNo) || 0, docDate: r.docDate || '', amount: Number(r.amount) || 0 })),
+    ...(manualRows || []).map((m, i) => ({ key: 'm' + i, kind: 'manual', manualIndex: i, roundNo: Number(m.roundNo) || 0, docDate: m.docDate || '', amount: Number(m.amount) || 0 }))
+      .filter(m => m.amount > 0),
+  ].sort((x, y) => (x.roundNo - y.roundNo) || String(x.docDate).localeCompare(String(y.docDate)));
+  const isCorrected = (p) => (corrections || []).some(k => (p.kind === 'doc' ? String(k.no) === String(p.no) && k.kind === 'doc' : k.kind === 'manual' && Number(k.roundNo) === p.roundNo));
+  const editing = past.find(p => p.key === editKey) || null;
+
+  const startEdit = (p) => {
+    if (editKey === p.key) { setEditKey(null); setErr(''); return; }
+    setEditKey(p.key); setErr('');
+    setDraft({ docDate: String(p.docDate || '').slice(0, 10), amount: String(Math.round(p.amount)), reason: '' });
+  };
+  const saveEdit = async () => {
+    if (!editing) return;
+    const amt = Number(String(draft.amount).replace(/[^0-9]/g, ''));
+    if (!String(draft.amount).replace(/[^0-9]/g, '')) { setErr('금액을 숫자로 입력해 주세요.'); return; }
+    if (!draft.docDate) { setErr('지급일을 입력해 주세요.'); return; }
+    if (!String(draft.reason).trim()) { setErr('정정 사유를 입력해 주세요.'); return; }
+    if (amt === Math.round(editing.amount) && draft.docDate === String(editing.docDate).slice(0, 10)) { setErr('변경된 내용이 없습니다.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await onCorrect?.({
+        category: catKey, kind: editing.kind, no: editing.no, manualIndex: editing.manualIndex, roundNo: editing.roundNo,
+        beforeAmount: Math.round(editing.amount), beforeDate: String(editing.docDate).slice(0, 10),
+        amount: amt, docDate: draft.docDate, reason: String(draft.reason).trim(),
+      });
+      setEditKey(null);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally { setBusy(false); }
+  };
+
+  const amountText = included ? _fmtNum(st.curAmt) : ((Number(currentAmount) || 0) > 0 ? _fmtNum(currentAmount) : '-');
+  const vendorTxt = String(vendorValue || '').trim();
+  const delta = st.curAmt > 0 ? Math.round(st.finalPct) - Math.round(st.prevPct) : 0;
+
+  return (
+    <div className={'xr-row' + (open ? ' open' : '')}>
+      <div className="xr-head">
+        {toggle && (
+          <button type="button" className="xr-check" aria-pressed={included}
+            aria-label={`${name} ${included ? '이번 회차에서 제외' : '이번 회차에 포함'}`}
+            title={included ? '이번 회차 포함 (누르면 제외)' : '이번 회차 제외 (누르면 포함)'}
+            onClick={() => toggle.onChange(!toggle.checked)}>
+            <span className="box">{included && (
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.4"><path d="m3.5 8.2 3 3 6-6.4"/></svg>
+            )}</span>
+          </button>
+        )}
+        <button type="button" className="xr-main" aria-expanded={!!open} onClick={onToggleOpen}>
+          <span className="xr-dot" style={{background:c}}/>
+          <span className="xr-name" style={{color: included ? undefined : 'var(--ink-4)'}}>{name}</span>
+          <span className={'xr-vendor' + (included && !vendorTxt ? ' missing' : '')}>{vendorTxt || '업체 미지정'}</span>
+          {!included && <span className="xr-tag">이번 회차 제외</span>}
+          {st.over && <span className="xr-tag warn">배정 초과</span>}
+          <span className="xr-prog" title={`지난 회차까지 ${_pctTxt(st.prevPct)} · 이번 회차 +${_pctTxt(st.finalPct - st.prevPct)} (배정액 ${_fmtNum(st.total)}원)`}>
+            <span className="xr-bar">
+              <span style={{width: st.prevBarPct + '%', background:c}}/>
+              <span style={{width: st.curBarPct + '%', background:light}}/>
+            </span>
+            <span className="xr-pct" style={{color: st.over ? ORANGE : 'var(--ink-1)'}}>{st.total > 0 ? _pctTxt(st.finalPct) : '-'}</span>
+            <span className="xr-delta">{delta > 0 ? '+' + delta : ''}</span>
+          </span>
+          <span className="xr-amt" style={{color: !included ? 'var(--ink-4)' : (st.over ? ORANGE : 'var(--ink-1)'), textDecoration: included ? 'none' : 'line-through'}}>{amountText}</span>
+          <svg className="xr-chev" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" style={{transform: open ? 'rotate(90deg)' : 'none'}}><path d="m6 4 4 4-4 4"/></svg>
+        </button>
+      </div>
+
+      {open && (
+        <div className="xr-body">
+          {banner}
+          <div className="xr-panel">
+            {/* 기성 6칸 */}
+            <div className="xr-kpi6">
+              <div>
+                <span className="k">배정액{totalNote ? <span style={{marginLeft:4}}>{totalNote}</span> : null}</span>
+                {onTotalChange
+                  ? <input type="number" value={totalAmount === '' || totalAmount == null ? '' : totalAmount} onChange={e => onTotalChange(e.target.value)} aria-label={`${name} 배정액(총액)`}/>
+                  : <span className="v">{_fmtNum(st.total)}</span>}
+              </div>
+              <div><span className="k">전회 누계</span><span className="v">{_fmtNum(st.prevSum)}</span></div>
+              <div className="hl">
+                <span className="k">금회 ({currentRoundLabel})</span>
+                {included
+                  ? <input type="number" value={currentAmount === 0 || currentAmount === '' || currentAmount == null ? '' : currentAmount} onChange={e => onAmountChange?.(e.target.value)} aria-label={`${name} 금회 요청액`}/>
+                  : <span className="v" style={{color:'var(--ink-4)'}}>제외</span>}
+              </div>
+              <div><span className="k">금회 누계</span><span className="v" style={{fontWeight:600}}>{_fmtNum(st.finalCum)}</span></div>
+              <div><span className="k">잔액</span><span className="v" style={{color: st.over ? ORANGE : undefined}}>{st.balance < 0 ? '-' + _fmtNum(-st.balance) : _fmtNum(st.balance)}</span></div>
+              <div><span className="k">기성률</span><span className="v" style={{fontWeight:600, color: st.over ? ORANGE : undefined}}>{st.total > 0 ? _pctTxt(st.finalPct) : '-'}</span></div>
+            </div>
+
+            {/* 회차 이력 · 정정 */}
+            <div className="xr-sec">
+              <div className="xr-sec-h">
+                <span><b>회차 이력</b>{canCorrect && past.length ? ' · 지난 회차를 누르면 정정' : ''}</span>
+                <span>{canCorrect ? '정정 내역은 사유와 함께 기록됩니다' : '지난 회차 정정은 관리자만 가능'}</span>
+              </div>
+              <div className="xr-tl">
+                {past.length === 0 && !(included && st.curAmt > 0) && (
+                  <span style={{fontSize:12, color:'var(--ink-3)', padding:'4px 0'}}>지급 이력 없음</span>
+                )}
+                {past.map((p, idx) => {
+                  const inner = (<>
+                    <span className="dotline"><i style={{borderColor:c, background:c}}/><s/></span>
+                    <span className="lb">{p.roundNo}차 <em>· {_fmtDate(p.docDate)}</em></span>
+                    <span className="am">{_fmtNum(p.amount)}</span>
+                    <span className="st">{p.kind === 'manual' ? '수기 기록' : '품의서'}{isCorrected(p) && <span className="fx">정정됨</span>}</span>
+                  </>);
+                  return canCorrect
+                    ? <button key={p.key} type="button" className={'xr-node' + (editKey === p.key ? ' sel' : '')} aria-pressed={editKey === p.key} aria-label={`${p.roundNo}차 ${name} 정정`} onClick={() => startEdit(p)}>{inner}</button>
+                    : <div key={p.key} className="xr-node">{inner}</div>;
+                })}
+                <div className="xr-node">
+                  <span className="dotline"><i style={{borderColor: included ? c : 'var(--line-2)', background: included && st.curAmt > 0 ? light : '#fff'}}/></span>
+                  <span className="lb">{currentRoundLabel} <em>· {_fmtDate(currentDate)}</em></span>
+                  <span className="am" style={{fontWeight:600, color: included ? (st.over ? ORANGE : undefined) : 'var(--ink-4)'}}>{included ? _fmtNum(st.curAmt) : '제외'}</span>
+                  <span className="st">이번 회차</span>
+                </div>
+              </div>
+
+              {editing && (
+                <div className="xr-edit" role="group" aria-label={`${editing.roundNo}차 ${name} 정정`}>
+                  <div className="xr-sec-h">
+                    <b>{editing.roundNo}차 · {name} 정정</b>
+                    <span>현재 기록 {_fmtNum(editing.amount)}원 · 지급일 {String(editing.docDate).slice(0, 10) || '-'}</span>
+                  </div>
+                  <div className="g2">
+                    <div>
+                      <label htmlFor={`xe-date-${catKey}`}>지급일 {editing.kind === 'doc' && <span style={{color:'var(--ink-3)'}}>(이 회차 전 항목 공통)</span>}</label>
+                      <input id={`xe-date-${catKey}`} type="date" value={draft.docDate} onChange={e => { setDraft(d => ({ ...d, docDate: e.target.value })); setErr(''); }}/>
+                    </div>
+                    <div>
+                      <label htmlFor={`xe-amt-${catKey}`}>{name} 금액 (원)</label>
+                      <input id={`xe-amt-${catKey}`} type="text" inputMode="numeric" value={draft.amount} onChange={e => { setDraft(d => ({ ...d, amount: e.target.value })); setErr(''); }} style={{textAlign:'right'}}/>
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor={`xe-reason-${catKey}`}>정정 사유 <span style={{color:'var(--danger)'}}>*</span></label>
+                    <input id={`xe-reason-${catKey}`} type="text" value={draft.reason} placeholder="예: 세금계산서 금액 재확인" onChange={e => { setDraft(d => ({ ...d, reason: e.target.value })); setErr(''); }}/>
+                  </div>
+                  {err && <div className="err" role="alert">{err}</div>}
+                  <div className="acts">
+                    <button type="button" className="xr-btn" onClick={() => { setEditKey(null); setErr(''); }} disabled={busy}>취소</button>
+                    <button type="button" className="xr-btn pri" onClick={saveEdit} disabled={busy}>{busy ? '저장 중…' : '정정 저장'}</button>
+                  </div>
+                </div>
+              )}
+
+              {(corrections || []).length > 0 && (
+                <div className="xr-log">
+                  <span style={{fontSize:12, color:'var(--ink-3)'}}>정정 이력 {corrections.length}건</span>
+                  {corrections.map((k, i) => (
+                    <div key={i}>
+                      <span className="c"><b style={{fontWeight:600}}>{k.roundNo}차</b> · {k.change}</span>
+                      <span className="m">{k.reason}{k.by ? ` · ${k.by}` : ''}{k.at ? ` · ${k.at}` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 업체 · 비고 */}
+            <div className="xr-sec">
+              <div className="xr-field">
+                <label htmlFor={`xv-${catKey}`}>업체명</label>
+                {vendorOptions && vendorOptions.length > 0 && (
+                  <select value={vendorOptions.includes(vendorValue) ? vendorValue : ''} style={{flex:'0 1 170px'}}
+                    onChange={e => { if (e.target.value) (onVendorPick || onVendorChange)?.(e.target.value); }}
+                    aria-label={`${vendorLabel || name} 저장된 업체 선택`}>
+                    <option value="">저장된 업체 선택</option>
+                    {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                )}
+                <input id={`xv-${catKey}`} value={vendorValue || ''} onChange={e => onVendorChange?.(e.target.value)} placeholder={vendorPlaceholder || '업체명'} style={{flex:1, minWidth:140}}/>
+                {onSaveVendor && (
+                  <button type="button" className="xr-btn" onClick={onSaveVendor} disabled={savingVendor}>{savingVendor ? '저장 중…' : '업체정보 저장'}</button>
+                )}
+              </div>
+              {vendorDetail && (vendorDetail.ceo || vendorDetail.bizNo || vendorDetail.account) && (
+                <div className="xr-vd">
+                  <span><span>대표자</span> {vendorDetail.ceo || '-'}</span>
+                  <span><span>사업자번호</span> {vendorDetail.bizNo || '-'}</span>
+                  <span><span>계좌</span> {[vendorDetail.bank, vendorDetail.account].filter(Boolean).join(' ') || '-'}{vendorDetail.holder ? ` (예금주 ${vendorDetail.holder})` : ''}</span>
+                </div>
+              )}
+              {onNoteChange && (
+                <div className="xr-field">
+                  <label htmlFor={`xn-${catKey}`}>비고</label>
+                  <input id={`xn-${catKey}`} value={note || ''} onChange={e => onNoteChange(e.target.value)} placeholder="지급 사유 (예: 10월 3일 납품 예정 · 계약금 40% 지급)" style={{flex:1, minWidth:160}}/>
+                </div>
+              )}
+            </div>
+
+            {/* 내역서 */}
+            <div className="xr-sec">
+              {(detailTitle || detailActions) && (
+                <div className="xr-sec-h">
+                  {detailTitle && <b>{detailTitle}</b>}
+                  {detailActions && <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>{detailActions}</div>}
+                </div>
+              )}
+              {detailBanner}
+              <div className="xr-scroll"><div className="xr-scroll-in">{children}</div></div>
+            </div>
+
+            {/* 지급이력 직접 입력 (수기) · 저장된 회차 삭제 */}
+            <div className="xr-sec">
+              <details className="xr-manual">
+                <summary>지급이력 직접 입력 · 저장 회차 삭제 ({(rounds || []).length + (manualRows || []).length}건)</summary>
+                <div style={{marginTop:8}}>
+                  {(() => {
+                    const G = '0.6fr 0.55fr 1.05fr 1.05fr 1.6fr 0.3fr';
+                    const inSt = { width:'100%', boxSizing:'border-box', padding:'3px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5, fontFamily:'inherit', background:'#fff' };
+                    const mrows = manualRows || [];
+                    const setRow = (i, k, v) => onManualRowsChange(mrows.map((m, idx) => idx === i ? { ...m, [k]: v } : m));
+                    const addRow = () => {
+                      const maxRound = Math.max(0, ...(rounds || []).map(r => Number(r.roundNo) || 0), ...mrows.map(m => Number(m.roundNo) || 0));
+                      onManualRowsChange([...mrows, { roundNo: String(maxRound + 1), docDate: new Date().toISOString().slice(0, 10), amount: '', note: '' }]);
+                    };
+                    return (<>
+                      <div style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:11, color:'var(--ink-3)', paddingBottom:4, borderBottom:'1px solid var(--line)'}}>
+                        <span>구분</span><span>회차</span><span>지급일</span><span style={{textAlign:'right'}}>지급금액</span><span>메모</span><span/>
+                      </div>
+                      {(rounds || []).map(r => (
+                        <div key={'d' + (r.no || r.roundNo)} style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:12, padding:'5px 0', borderBottom:'1px solid var(--line)', alignItems:'center', color:'var(--ink-2)'}}>
+                          <span>품의서</span><span>{r.roundNo}차</span><span>{_fmtDate(r.docDate)}</span>
+                          <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{_fmtNum(r.amount)}</span>
+                          <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.note || ''}</span>
+                          <span style={{textAlign:'right'}}>
+                            {r.no && onDeleteRound && (
+                              <button type="button" title={`${r.roundNo}차 저장 기록 삭제`} aria-label={`${r.roundNo}차 저장 기록 삭제`} onClick={() => onDeleteRound(r)} disabled={deletingNo === r.no}
+                                style={{border:'none', background:'none', cursor:'pointer', color:'var(--danger)', fontSize:12, padding:'2px 4px'}}>{deletingNo === r.no ? '···' : '삭제'}</button>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                      {mrows.map((m, i) => (
+                        <div key={'m' + i} style={{display:'grid', gridTemplateColumns:G, gap:6, fontSize:12, padding:'4px 0', borderBottom:'1px solid var(--line)', alignItems:'center'}}>
+                          <span>수기</span>
+                          <input type="number" min="1" value={m.roundNo} onChange={e => setRow(i, 'roundNo', e.target.value)} aria-label={`${name} 수기 ${i + 1} 회차`} style={{...inSt, textAlign:'right'}}/>
+                          <input type="date" value={m.docDate} onChange={e => setRow(i, 'docDate', e.target.value)} aria-label={`${name} 수기 ${i + 1} 지급일`} style={inSt}/>
+                          <input type="number" placeholder="지급금액" value={m.amount} onChange={e => setRow(i, 'amount', e.target.value)} aria-label={`${name} 수기 ${i + 1} 지급금액`} style={{...inSt, textAlign:'right', fontWeight:600}}/>
+                          <input type="text" placeholder="메모" value={m.note} onChange={e => setRow(i, 'note', e.target.value)} aria-label={`${name} 수기 ${i + 1} 메모`} style={inSt}/>
+                          <span style={{textAlign:'right'}}>
+                            <button type="button" title="이 줄 삭제 (저장해야 반영)" aria-label={`${name} 수기 ${i + 1} 줄 삭제`} onClick={() => onManualRowsChange(mrows.filter((_, idx) => idx !== i))}
+                              style={{border:'none', background:'none', cursor:'pointer', color:'var(--danger)', fontSize:14, padding:'2px 4px'}}>×</button>
+                          </span>
+                        </div>
+                      ))}
+                      {onManualRowsChange && (
+                        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginTop:8, flexWrap:'wrap'}}>
+                          <button type="button" className="xr-btn" onClick={addRow}>+ 지급이력 추가</button>
+                          <span style={{display:'flex', alignItems:'center', gap:8}}>
+                            {manualSavedAt && <span style={{fontSize:11, color:'var(--ink-3)'}}>마지막 저장 {String(manualSavedAt).slice(5)}</span>}
+                            <button type="button" className="xr-btn pri" onClick={onSaveManual} disabled={savingManual} aria-label={`${name} 지급이력 저장`}>{savingManual ? '저장 중…' : '지급이력 저장'}</button>
+                          </span>
+                        </div>
+                      )}
+                    </>);
+                  })()}
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+window.CategoryRow = CategoryRow;
+
+// ═══════════════════════════════════════════════════════════════
 // 4. 전회 기성 드롭박스 (개선안 ①)
 // ═══════════════════════════════════════════════════════════════
 // 저장된 회차의 항목별(설치비/제품대/기타경비/영업수수료) 금액을 계산.
