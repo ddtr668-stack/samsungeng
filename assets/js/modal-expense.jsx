@@ -131,6 +131,14 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const [itemsSavedAt, setItemsSavedAt] = useState({});           // { product|install|etc|commission: 'yyyy-MM-dd HH:mm' }
   const [savingItems, setSavingItems] = useState(null);
   const itemsRef = useRef({});
+  // 수기 지급이력 (계약내역서 레코드의 history) — 표에서 바로 입력 → [지급이력 저장]
+  const EMPTY_HIST = { product: [], install: [], etc: [], commission: [] };
+  const [manualHist, setManualHist] = useState(EMPTY_HIST);
+  const [histSavedAt, setHistSavedAt] = useState({});
+  const [savingManualKind, setSavingManualKind] = useState(null);
+  const savedRecordsRef = useRef({});     // kind → 서버에 저장된 레코드 { items, summary?, filename?, history? }
+  const manualMaxRef = useRef(0);         // 수기 지급이력의 가장 큰 회차 (새 회차 번호 계산용)
+  const setManualRows = (k) => (rows) => setManualHist(h => ({ ...h, [k]: rows }));
   itemsRef.current = { product: productItems, install: installItems, etc: etcItems, commission: commissionItems };
 
   const [importing, setImporting] = useState(null);
@@ -229,6 +237,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   useEffect(() => {
     if (!open || !contract?.no) return;
     setItemsSavedAt({});
+    setManualHist(EMPTY_HIST);
+    setHistSavedAt({});
+    savedRecordsRef.current = {};
+    manualMaxRef.current = 0;
     if (typeof hasApiUrl !== 'function' || !hasApiUrl() || !apiClient.getContractItems) return;
     let alive = true;
     apiClient.getContractItems(contract.no)
@@ -239,6 +251,21 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         const isBlank = (rows) => !rows.some(x => x && (x.name || x.spec || x.item || Number(x.amount) || Number(x.unitPrice) || Number(x.qty)));
         const cur = itemsRef.current;
         const loaded = [];
+        // 저장된 레코드 보관 + 수기 지급이력 불러오기
+        const hist = { product: [], install: [], etc: [], commission: [] };
+        let maxManual = 0;
+        Object.keys(hist).forEach(k => {
+          const v = saved[k];
+          const rec = Array.isArray(v) ? { items: v } : (v || null);
+          if (rec) savedRecordsRef.current[k] = rec;
+          hist[k] = ((rec && rec.history) || []).map(m => {
+            maxManual = Math.max(maxManual, Number(m.roundNo) || 0);
+            return { roundNo: String(m.roundNo ?? ''), docDate: m.docDate || '', amount: m.amount === 0 || m.amount ? String(m.amount) : '', note: m.note || '' };
+          });
+        });
+        setManualHist(hist);
+        manualMaxRef.current = maxManual;
+        if (maxManual) setForm(f => ({ ...f, paymentCount: String(Math.max(Number(f.paymentCount) || 1, maxManual + 1)) }));
         if (!isBlank(rowsOf(saved.product)) && isBlank(cur.product)) {
           const v = saved.product;
           setProductItems(rowsOf(v));
@@ -267,9 +294,12 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     const payload = { items: rows };
     if (kind === 'product') { payload.summary = productSummary || null; payload.filename = productFilename || ''; }
     if (kind === 'install') payload.filename = installFilename || '';
+    // 저장된 수기 지급이력은 그대로 유지
+    payload.history = (savedRecordsRef.current[kind] && savedRecordsRef.current[kind].history) || [];
     setSavingItems(kind);
     try {
       const r = await apiClient.saveContractItems(contract.no, kind, payload);
+      savedRecordsRef.current[kind] = payload;
       setItemsSavedAt(s => ({ ...s, [kind]: r.savedAt || '' }));
       toast?.(`${label} 내역 저장 완료 (${rows.length}행) — 다음에 열면 자동으로 불러옵니다`, 'success');
     } catch (e) {
@@ -289,6 +319,31 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     </button>
   );
 
+  // ─── 수기 지급이력 저장 (계약내역서 레코드의 history 만 바꾸고 품목 내역은 그대로) ───
+  const handleSaveManual = async (kind) => {
+    if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    const label = { product:'제품대', install:'설치비', etc:'기타경비', commission:'영업수수료' }[kind];
+    const rows = (manualHist[kind] || []).filter(m => Number(m.amount) > 0);
+    const history = rows.map(m => ({ roundNo: Number(m.roundNo) || 0, docDate: m.docDate || '', amount: Number(m.amount) || 0, note: m.note || '' }));
+    const base = savedRecordsRef.current[kind] || { items: [] };
+    const payload = { ...base, items: base.items || [], history };
+    setSavingManualKind(kind);
+    try {
+      const r = await apiClient.saveContractItems(contract.no, kind, payload);
+      savedRecordsRef.current[kind] = payload;
+      setHistSavedAt(s => ({ ...s, [kind]: r.savedAt || '' }));
+      setManualHist(h => ({ ...h, [kind]: rows }));   // 금액 없는 빈 줄은 정리
+      const maxManual = Math.max(0, ...Object.keys(savedRecordsRef.current).flatMap(k => ((savedRecordsRef.current[k] || {}).history || []).map(m => Number(m.roundNo) || 0)));
+      manualMaxRef.current = maxManual;
+      if (!selectedRound) setForm(f => ({ ...f, paymentCount: String(Math.max(nextRoundNo(expenseHistory), maxManual + 1)) }));
+      toast?.(`${label} 지급이력 저장 완료 (${history.length}건)`, 'success');
+    } catch (e) {
+      toast?.(`${label} 지급이력 저장 실패: ` + errMsg(e), 'error');
+    } finally {
+      setSavingManualKind(null);
+    }
+  };
+
   // ─── 지출품의서 이력 로드 (① 드롭박스) ───
   useEffect(() => {
     if (!open || !contract?.no) return;
@@ -301,8 +356,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         if (!alive) return;
         const hist = r.history || [];
         setExpenseHistory(hist);
-        // 새 지출품의서는 '마지막 저장 회차 + 1' 차로 시작 (1차가 있으면 2차)
-        setForm(f => ({ ...f, paymentCount: String(nextRoundNo(hist)) }));
+        // 새 지출품의서는 '마지막 저장 회차 + 1' 차로 시작 (1차가 있으면 2차) — 수기 지급이력 회차도 고려
+        setForm(f => ({ ...f, paymentCount: String(Math.max(nextRoundNo(hist), manualMaxRef.current + 1)) }));
       })
       .catch(e => {
         if (!alive) return;
@@ -336,12 +391,18 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       ...(r.companyName ? { companyName: r.companyName } : {}),
     }));
     // JSON 복원 (있으면)
-    try {
-      if (r.productItems_JSON) setProductItems(JSON.parse(r.productItems_JSON));
-      if (r.installItems_JSON) setInstallItems(JSON.parse(r.installItems_JSON));
-      if (r.expenseItems_JSON) setEtcItems(JSON.parse(r.expenseItems_JSON));
-      if (r.commissionItems_JSON) setCommissionItems(JSON.parse(r.commissionItems_JSON));
-    } catch (e) { /* ignore parse err */ }
+    // 그 회차에 저장된 내역이 비어 있으면 [내역 저장]으로 보관한 계약 내역을 대신 보여줌 (빈 표로 초기화 방지)
+    const pick = (json, kind) => {
+      let rows = [];
+      try { rows = JSON.parse(json || '[]') || []; } catch (e) { rows = []; }
+      if (rows.length) return rows;
+      const rec = savedRecordsRef.current[kind];
+      return (rec && Array.isArray(rec.items)) ? rec.items : rows;
+    };
+    setProductItems(pick(r.productItems_JSON, 'product'));
+    setInstallItems(pick(r.installItems_JSON, 'install'));
+    setEtcItems(pick(r.expenseItems_JSON, 'etc'));
+    setCommissionItems(pick(r.commissionItems_JSON, 'commission'));
     // 🆕 항목별 "이번 회차 포함" 토글도 그 회차에 저장된 값으로 복원
     // (includeInstall 은 v3 이전엔 없던 개념이라, 과거 저장 건(undefined)은 그대로 포함으로 취급)
     setIncludeInstall(r.includeInstall !== false);
@@ -464,6 +525,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const etcRounds = activeHistory
     .map(h => ({ roundNo: h.roundNo, docDate: h.docDate, amount: breakdownOf(h).etc, no: h.no, manual: h.manual, note: h.manual ? h.note : '' }))
     .filter(r => r.amount > 0);
+
+  // 수기 지급이력을 회차 이력에 합침 (출력물·누계용)
+  const withManual = (k, list) => [...list, ...((manualHist[k] || []).filter(m => Number(m.amount) > 0)
+    .map(m => ({ roundNo: Number(m.roundNo) || 0, docDate: m.docDate, amount: Number(m.amount) || 0, manual: true, note: m.note })))]
+    .sort((x, y) => (x.roundNo - y.roundNo) || String(x.docDate || '').localeCompare(String(y.docDate || '')));
 
   // 설치비 업체를 목록에서 고르면 지급 대상(도급업체) 정보도 그 업체로 채움 (계좌 오입금 방지: 없는 값은 빈칸)
   const pickInstallVendor = (name) => {
@@ -712,46 +778,6 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     );
   };
 
-  // ─── 지급이력 수기 추가 (시스템 도입 전 지급 등 — 지출품의서 없이 지급 기록만) ───
-  const handleAddManual = (cat) => async ({ roundNo, docDate, amount, note }) => {
-    if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); throw new Error('no api'); }
-    const label = { install:'설치비', product:'제품대', etc:'기타경비', commission:'영업수수료' }[cat];
-    // 구버전 Apps Script 는 수기 표시를 모르고 같은 회차 기록을 덮어쓸 수 있으므로 버전 확인 후 저장
-    const MIN_VER = '2026-10-01-01';
-    let ver = '';
-    try { ver = String((await apiClient.ping())?.version || ''); } catch (e) { ver = ''; }
-    if (ver.slice(0, MIN_VER.length) < MIN_VER) {
-      toast?.(`⚠️ Apps Script 재배포가 필요합니다 (현재 ${ver ? ver.split(' ')[0] : '버전 정보 없음'} · 필요 ${MIN_VER}). gas-copy.html 에서 DashboardApi.gs 를 복사해 교체 후 "배포 관리 → 새 버전"으로 배포하세요.`, 'error');
-      throw new Error('outdated server');
-    }
-    const vendor = cat === 'install' ? (form.subName || contract.subcontractor || '')
-      : ({ product: productVendorName, etc: etcVendorName, commission: commissionVendorName }[cat] || '');
-    try {
-      await apiClient.saveExpense({
-        contractNo: contract.no, roundNo, docDate, manual: true, manager: form.manager,
-        subcontractor: cat === 'install' ? vendor : (contract.subcontractor || ''),
-        amount: cat === 'install' ? amount : 0, prevProgress: 0,
-        includeInstall: cat === 'install', includeProduct: cat === 'product',
-        includeCommission: cat === 'commission', includeEtc: cat === 'etc',
-        productAmount: cat === 'product' ? amount : 0,
-        commission: cat === 'commission' ? amount : 0,
-        etcCost: cat === 'etc' ? amount : 0,
-        grandTotal: amount, docCategory: cat, note: note || '수기 입력',
-        catNotes: { [cat]: note || '' },
-        productVendorName: cat === 'product' ? vendor : '', commissionVendorName: cat === 'commission' ? vendor : '', etcVendorName: cat === 'etc' ? vendor : '',
-        installItems: [], productItems: [], expenseItems: [], commissionItems: [],
-      });
-      toast?.(`${label} ${roundNo}차 지급이력 추가 (${Math.round(amount).toLocaleString()}원)`, 'success');
-      const r = await apiClient.expenseByContract(contract.no);
-      const hist = r.history || [];
-      setExpenseHistory(hist);
-      if (!selectedRound) setForm(f => ({ ...f, paymentCount: String(nextRoundNo(hist)) }));
-    } catch (e) {
-      toast?.('지급이력 추가 실패: ' + errMsg(e), 'error');
-      throw e;
-    }
-  };
-
   // ─── 저장 / 출력 / PDF 다운로드 ───
   const buildPayload = () => ({
     contractNo: contract.no,
@@ -906,9 +932,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     requestAmount, etcTotal: etcRequestAmount, commissionTotal: commissionRequestAmount, grandTotal,
     installItems, productItems, productSummary, productTotal, productAmount: productRequestAmount,
     etcItems, commissionItems,
-    rounds: previousRounds,
-    // 🆕 항목별(설치비/제품대/영업수수료/기타경비) 회차 이력 + 이번 회차 포함 여부
-    productRounds, commissionRounds, etcRounds,
+    rounds: withManual('install', previousRounds),
+    // 🆕 항목별(설치비/제품대/영업수수료/기타경비) 회차 이력 + 이번 회차 포함 여부 (수기 지급이력 포함)
+    productRounds: withManual('product', productRounds), commissionRounds: withManual('commission', commissionRounds), etcRounds: withManual('etc', etcRounds),
     includeInstall, includeProduct, includeCommission, includeEtc,
     // 🆕 v3: 카테고리별 업체명 오버라이드(지정 안 하면 출력에서 기본 도급업체 정보를 그대로 사용)
     productVendorName, commissionVendorName, etcVendorName,
@@ -1338,7 +1364,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setProductBudget}
         totalNote={productBudgetNum !== (baseBudgets.product || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={productRounds}
-        onAddManual={handleAddManual('product')}
+        manualRows={manualHist.product} onManualRowsChange={setManualRows('product')}
+        onSaveManual={() => handleSaveManual('product')} savingManual={savingManualKind === 'product'} manualSavedAt={histSavedAt.product}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
         currentAmount={docCategory === 'product' ? docCatMeta.amount : productRequestAmount}
@@ -1439,7 +1466,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setInstallBudget}
         totalNote={installBudgetNum !== (baseBudgets.install || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={previousRounds}
-        onAddManual={handleAddManual('install')}
+        manualRows={manualHist.install} onManualRowsChange={setManualRows('install')}
+        onSaveManual={() => handleSaveManual('install')} savingManual={savingManualKind === 'install'} manualSavedAt={histSavedAt.install}
         currentAmount={docCategory === 'install' ? docCatMeta.amount : requestAmount}
         onAmountChange={v => setForm({...form, requestAmount: v})}
         currentRoundLabel={`${form.paymentCount}차`}
@@ -1501,7 +1529,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setEtcBudget}
         totalNote={etcBudgetNum !== (baseBudgets.etc || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={etcRounds}
-        onAddManual={handleAddManual('etc')}
+        manualRows={manualHist.etc} onManualRowsChange={setManualRows('etc')}
+        onSaveManual={() => handleSaveManual('etc')} savingManual={savingManualKind === 'etc'} manualSavedAt={histSavedAt.etc}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
         currentAmount={docCategory === 'etc' ? docCatMeta.amount : etcRequestAmount}
@@ -1528,7 +1557,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         onTotalChange={setCommissionBudget}
         totalNote={commissionBudgetNum !== (baseBudgets.commission || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={commissionRounds}
-        onAddManual={handleAddManual('commission')}
+        manualRows={manualHist.commission} onManualRowsChange={setManualRows('commission')}
+        onSaveManual={() => handleSaveManual('commission')} savingManual={savingManualKind === 'commission'} manualSavedAt={histSavedAt.commission}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
         currentAmount={docCategory === 'commission' ? docCatMeta.amount : commissionRequestAmount}
