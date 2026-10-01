@@ -115,7 +115,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 제품대·설치비 총액도 화면에서 수정 → 계약(계약관리 시트)에 반영
   const [productBudget, setProductBudget] = useState('');
   const [installBudget, setInstallBudget] = useState('');
-  const [baseBudgets, setBaseBudgets] = useState({ product: 0, install: 0, etc: 0 });   // 계약에 저장된 값
+  const [commissionBudget, setCommissionBudget] = useState('');
+  const [baseBudgets, setBaseBudgets] = useState({ product: 0, install: 0, etc: 0, commission: 0 });   // 계약에 저장된 값
   const [savedVendorNames, setSavedVendorNames] = useState([]);   // 이번 창에서 새로 저장한 업체
   // 🆕 v3: 항목별 기성 카드마다 별도로 지정할 수 있는 업체명(지급대상이 카테고리별로 다를 때)
   const [productVendorName, setProductVendorName] = useState('');
@@ -192,7 +193,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setEtcBudget(contract?.incidental ? String(contract.incidental) : '');
     setProductBudget(contract?.productCost ? String(contract.productCost) : '');
     setInstallBudget(contract?.subcontractAmount ? String(contract.subcontractAmount) : '');
-    setBaseBudgets({ product: Number(contract?.productCost) || 0, install: Number(contract?.subcontractAmount) || 0, etc: Number(contract?.incidental) || 0 });
+    setCommissionBudget(contract?.salesCost ? String(contract.salesCost) : '');
+    setBaseBudgets({ product: Number(contract?.productCost) || 0, install: Number(contract?.subcontractAmount) || 0, etc: Number(contract?.incidental) || 0, commission: Number(contract?.salesCost) || 0 });
     setProductVendorName('');
     setCommissionVendorName('');
     setCatNotes(EMPTY_NOTES);
@@ -423,9 +425,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const etcBudgetNum = Number(etcBudget) || 0;
   const productBudgetNum = Number(productBudget) || 0;
   const installBudgetNum = Number(installBudget) || 0;
+  const commissionBudgetNum = Number(commissionBudget) || 0;
   const BUDGET_META = {
     product: { field: 'productCost', label: '제품대', value: productBudgetNum },
     install: { field: 'subcontractAmount', label: '설치비(도급금액)', value: installBudgetNum },
+    commission: { field: 'salesCost', label: '영업수수료', value: commissionBudgetNum },
     etc:     { field: 'incidental', label: '기타경비', value: etcBudgetNum },
   };
   const changedBudgetKeys = Object.keys(BUDGET_META).filter(k => BUDGET_META[k].value !== (baseBudgets[k] || 0));
@@ -855,7 +859,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 화면 입력값을 A4 세로 인쇄용 독립 문서(HTML)로 변환
   const buildPrintHtml = () => window.buildExpensePrintHtml({
     // 기타경비 총액은 화면에서 수정한 값으로 출력
-    contract: { ...contract, incidental: etcBudgetNum, productCost: productBudgetNum, subcontractAmount: installBudgetNum }, form,
+    contract: { ...contract, incidental: etcBudgetNum, productCost: productBudgetNum, subcontractAmount: installBudgetNum, salesCost: commissionBudgetNum }, form,
     subcontractors: (data && data.subcontractors) || [],   // 항목별 업체 정보 조회용
     koreanAmount: numberToKoreanAmount(grandTotal),
     requestAmount, etcTotal: etcRequestAmount, commissionTotal: commissionRequestAmount, grandTotal,
@@ -1466,6 +1470,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       </CategoryCard>
 
       {/* 4. 영업수수료 기성 */}
+      {budgetBanner('commission')}
       <CategoryCard
         icon="💼" name="영업수수료 기성" accent="plum"
         toggle={{ checked: includeCommission, onChange: setIncludeCommission, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
@@ -1475,7 +1480,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         vendorPlaceholder="영업수수료 지급 대상" vendorLabel="영업수수료"
         onSaveVendor={() => handleSaveCategoryVendorName('commission', commissionVendorName, '영업수수료')}
         savingVendor={savingVendorCat === 'commission'}
-        totalAmount={contract.salesCost}
+        totalAmount={commissionBudget}
+        onTotalChange={setCommissionBudget}
+        totalNote={commissionBudgetNum !== (baseBudgets.commission || 0) ? '(수정됨)' : '(계약관리 시트)'}
         rounds={commissionRounds}
         onDeleteRound={handleDeleteRound}
         deletingNo={deletingRound}
