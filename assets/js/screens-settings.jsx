@@ -162,7 +162,7 @@ const ScreenSettings = ({ data, onRefresh, onApiUpdated }) => {
     setTestResult(null);
     try {
       const r = await apiClient.ping();
-      setTestResult({ ok: true, message: `연결 성공! · Apps Script 배포 버전: ${r.version || '(버전 정보 없음 · 구버전 배포일 수 있음)'}` });
+      setTestResult({ ok: true, message: `연결 성공! · Apps Script 배포 버전: ${r.version || '(버전 정보 없음 · 구버전 배포일 수 있음)'}${r.sheetName ? ` · 연결된 시트: ${r.sheetName}` : ''} · 주소 ${shortApiUrl(url)}` });
       toast?.('연결 성공', 'success');
     } catch (e) {
       setTestResult({ ok: false, message: e.message });
