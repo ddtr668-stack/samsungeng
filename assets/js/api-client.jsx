@@ -188,6 +188,9 @@ const api = {
   saveExpense: (payload) => apiFetch('saveExpense', { method:'POST', body: payload }),
   // 저장된 지출품의서 회차(설치비 기성) 삭제(취소 처리) — payload: { contractNo, no }
   cancelExpenseRound: (payload) => apiFetch('cancelExpenseRound', { method:'POST', body: payload }),
+  // 지난 회차 금액·지급일 정정 (관리자) — 기성정정이력 시트에 사유와 함께 기록
+  // payload: { contractNo, category, kind:'doc'|'manual', no?, roundNo, beforeAmount, beforeDate, amount, docDate, reason }
+  correctExpenseRound: (payload) => apiFetch('correctExpenseRound', { method:'POST', body: payload }),
   // 계약별 내역서(제품·설치·기타·수수료) — kind: 'product' | 'install' | 'etc' | 'commission'
   getContractItems: (contractNo) => apiFetch('contractItems', { params: { contractNo } }),
   saveContractItems: (contractNo, kind, items) => apiFetch('saveContractItems', { method:'POST', body: { contractNo, kind, items } }),

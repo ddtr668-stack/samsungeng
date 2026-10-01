@@ -156,6 +156,9 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const toast = window.useToast ? window.useToast() : null;
   const confirmDialog = window.useConfirm ? window.useConfirm() : null;
   const [deletingRound, setDeletingRound] = useState(null);   // 삭제(취소 처리) 진행 중인 회차의 시트 행번호
+  // v3.17 · 펼친 항목(한 번에 하나) · 지난 회차 정정 이력(기성정정이력 시트)
+  const [openCat, setOpenCat] = useState('install');
+  const [corrections, setCorrections] = useState([]);
 
   // ─── 계약 변경 시 기본값 세팅 ───
   useEffect(() => {
@@ -207,6 +210,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setCommissionVendorName('');
     setCatNotes(EMPTY_NOTES);
     setEtcVendorName('');
+    setOpenCat('install');
+    setCorrections([]);
   }, [open, contract?.no]);
 
   // 🆕 미리보기 모드 · body 클래스 토글 (early return 이전에 위치 · hooks 규칙)
@@ -380,6 +385,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         if (!alive) return;
         const hist = r.history || [];
         setExpenseHistory(hist);
+        setCorrections(r.corrections || []);
         // 새 지출품의서는 '마지막 저장 회차 + 1' 차로 시작 (1차가 있으면 2차) — 수기 지급이력 회차도 고려
         setForm(f => ({ ...f, paymentCount: String(Math.max(nextRoundNo(hist), manualMaxRef.current + 1)) }));
       })
@@ -478,6 +484,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       await apiClient.cancelExpenseRound({ contractNo: contract.no, no: r.no });
       const hist = await apiClient.expenseByContract(contract.no);
       setExpenseHistory(hist.history || []);
+      if (hist.corrections) setCorrections(hist.corrections);
       const paid = await syncInstallPaid(hist.history || []);
       toast?.(`${r.roundNo}차 회차 삭제 완료${paid != null ? ` · 설치비 기성금액 ${paid.toLocaleString()}원으로 변경` : ''}`, 'success');
       if (paid != null) onSaved?.()?.catch?.(() => {});
@@ -916,6 +923,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         try {
           const r = await apiClient.expenseByContract(contract.no);
           setExpenseHistory(r.history || []);
+          if (r.corrections) setCorrections(r.corrections);
           if (res?.entry?.no) setSelectedRound(String(res.entry.no));
           paid = await syncInstallPaid(r.history || []);
         } catch { /* 이력 재로드 실패는 무시 */ }
@@ -961,9 +969,14 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     requestAmount, etcTotal: etcRequestAmount, commissionTotal: commissionRequestAmount, grandTotal,
     installItems, productItems, productSummary, productTotal, productAmount: productRequestAmount,
     etcItems, commissionItems,
-    rounds: withManual('install', previousRounds),
-    // 🆕 항목별(설치비/제품대/영업수수료/기타경비) 회차 이력 + 이번 회차 포함 여부 (수기 지급이력 포함)
-    productRounds: withManual('product', productRounds), commissionRounds: withManual('commission', commissionRounds), etcRounds: withManual('etc', etcRounds),
+    rounds: markCorrected('install', withManual('install', previousRounds)),
+    // 🆕 항목별(설치비/제품대/영업수수료/기타경비) 회차 이력 + 이번 회차 포함 여부 (수기 지급이력 포함, 정정된 회차 표시)
+    productRounds: markCorrected('product', withManual('product', productRounds)),
+    commissionRounds: markCorrected('commission', withManual('commission', commissionRounds)),
+    etcRounds: markCorrected('etc', withManual('etc', etcRounds)),
+    // v3.17 · 자금 확인(발주처 입금 누계) · 비고 자동 문구(정정 반영)
+    received: paidTotal,
+    corrections: printCorrections,
     includeInstall, includeProduct, includeCommission, includeEtc,
     // 🆕 v3: 카테고리별 업체명 오버라이드(지정 안 하면 출력에서 기본 도급업체 정보를 그대로 사용)
     productVendorName, commissionVendorName, etcVendorName,
@@ -1067,6 +1080,96 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   };
   const docCatMeta = DOC_CATEGORY_META[docCategory] || DOC_CATEGORY_META.install;
 
+  // ─── v3.17 · Linear 화면용 계산 ───
+  // 각 항목 '금회' 입력칸 값 (비워두면 품목표 합계)
+  const catCurrentInput = {
+    product: productAmount !== '' ? productAmount : productRequestAmount,
+    install: form.requestAmount,
+    etc: etcAmount !== '' ? etcAmount : etcRequestAmount,
+    commission: commissionAmount !== '' ? commissionAmount : commissionRequestAmount,
+  };
+  const CAT_DEFS = [
+    { key:'product',    name:'제품대',   included: includeProduct,    total: productBudgetNum,    rounds: productRounds,    vendor: productVendorName },
+    { key:'install',    name:'설치비',   included: includeInstall,    total: installBudgetNum,    rounds: previousRounds,   vendor: form.subName },
+    { key:'etc',        name:'기타경비', included: includeEtc,        total: etcBudgetNum,        rounds: etcRounds,        vendor: etcVendorName },
+    { key:'commission', name:'영업수수료', included: includeCommission, total: commissionBudgetNum, rounds: commissionRounds, vendor: commissionVendorName },
+  ];
+  const catStats = {};
+  CAT_DEFS.forEach(k => {
+    catStats[k.key] = window.computeCategoryStats({ totalAmount: k.total, rounds: k.rounds, manualRows: manualHist[k.key], included: k.included, currentAmount: catCurrentInput[k.key] });
+  });
+  const prevAll = CAT_DEFS.reduce((s, k) => s + catStats[k.key].prevSum, 0);
+  const afterAll = CAT_DEFS.reduce((s, k) => s + catStats[k.key].finalCum, 0);
+  const segs = CAT_DEFS.filter(k => k.included && catStats[k.key].curAmt > 0).map(k => ({
+    key: k.key, name: k.name, color: EXPENSE_CAT_COLOR[k.key], amt: catStats[k.key].curAmt,
+    w: (grandTotal > 0 ? catStats[k.key].curAmt / grandTotal * 100 : 0).toFixed(1) + '%',
+  }));
+  const contractTotal = Number(contract.totalAmount) || 0;
+  const costTotal = productBudgetNum + installBudgetNum + etcBudgetNum + commissionBudgetNum;
+  const profit = contractTotal - costTotal;
+  const received = Number(paidTotal) || 0;
+  const cushion = received - afterAll;
+  const won = (v) => Math.round(Math.abs(v)).toLocaleString('ko-KR');
+  const alerts = [];
+  if (!(form.docSubject || '').trim()) alerts.push('품의제목이 비어 있어 출력·미리보기를 할 수 없습니다.');
+  if (grandTotal <= 0) alerts.push('이번 회차에 포함된 금액이 없습니다. 청구할 항목을 체크하고 금회 금액을 입력하세요.');
+  CAT_DEFS.forEach(k => {
+    const s = catStats[k.key];
+    if (k.included && !String(k.vendor || '').trim()) alerts.push(`${k.name} 업체명이 지정되지 않았습니다.`);
+    if (k.included && s.curAmt <= 0) alerts.push(`${k.name}이(가) 포함되어 있지만 금회 금액이 0원입니다.`);
+    if (s.over) alerts.push(`${k.name} 금회 누계가 배정액보다 ${won(s.finalCum - s.total)}원 많습니다.`);
+  });
+  if (contractTotal > 0 && cushion < 0) alerts.push(`지급 후 누적 지급이 발주처 입금 누계보다 ${won(cushion)}원 많습니다.`);
+
+  // ─── 지난 회차 정정 (관리자) ───
+  const canCorrect = typeof isAdmin === 'function' && isAdmin();
+  const _CAT_LABEL = { product:'제품대', install:'설치비', etc:'기타경비', commission:'영업수수료' };
+  const _shortDate = (d) => d ? String(d).slice(5, 10).replace('-', '.') : '-';
+  const correctionsOf = (key) => (corrections || []).filter(k => k.category === key).map(k => {
+    const parts = [];
+    if (Number(k.beforeAmount) !== Number(k.afterAmount)) parts.push(`금액 ${Math.round(Number(k.beforeAmount) || 0).toLocaleString()} → ${Math.round(Number(k.afterAmount) || 0).toLocaleString()}`);
+    if (String(k.beforeDate || '') !== String(k.afterDate || '')) parts.push(`지급일 ${_shortDate(k.beforeDate)} → ${_shortDate(k.afterDate)}`);
+    return { ...k, change: parts.join(' · ') || '변경 없음' };
+  });
+  // 출력물: 정정된 회차 표시 · 비고 자동 문구
+  const markCorrected = (key, list) => list.map(r => ({ ...r, corrected: (corrections || []).some(k => k.category === key && (r.manual
+    ? (k.kind === 'manual' && Number(k.roundNo) === Number(r.roundNo))
+    : (k.kind === 'doc' && String(k.no) === String(r.no)))) }));
+  const printCorrections = ['product', 'install', 'etc', 'commission'].flatMap(key => correctionsOf(key)
+    .map(k => ({ text: `${k.roundNo}차 ${_CAT_LABEL[key]} 정정 반영: ${k.change} (${k.at}${k.reason ? ', ' + k.reason : ''})` })));
+  // 수기 지급이력 다시 불러오기 (정정 후)
+  const reloadManual = async (kind) => {
+    const r = await apiClient.getContractItems(contract.no);
+    const v = (r.items || {})[kind];
+    const rec = Array.isArray(v) ? { items: v } : (v || null);
+    if (rec) savedRecordsRef.current[kind] = rec;
+    const list = ((rec && rec.history) || []).map(m => ({ roundNo: String(m.roundNo ?? ''), docDate: m.docDate || '', amount: m.amount === 0 || m.amount ? String(m.amount) : '', note: m.note || '' }));
+    setManualHist(h => ({ ...h, [kind]: list }));
+    if (r.savedAt && r.savedAt[kind]) setHistSavedAt(s => ({ ...s, [kind]: r.savedAt[kind] }));
+    return (rec && rec.history) || [];
+  };
+  const handleCorrect = async (p) => {
+    if (typeof hasApiUrl !== 'function' || !hasApiUrl()) throw new Error('API URL이 설정되지 않았습니다');
+    try {
+      await apiClient.correctExpenseRound({ contractNo: contract.no, ...p });
+    } catch (e) {
+      const msg = errMsg(e);
+      if (/UNKNOWN_ROUTE|알 수 없는 라우트/i.test(msg)) throw new Error('Apps Script 재배포가 필요합니다 (기성 정정 기능 없음). DashboardApi.gs·Auth.gs 를 최신본으로 바꾼 뒤 "배포 관리 → 새 버전"으로 배포해 주세요.');
+      throw new Error(msg);
+    }
+    const r = await apiClient.expenseByContract(contract.no);
+    setExpenseHistory(r.history || []);
+    setCorrections(r.corrections || []);
+    let manualInstall;
+    if (p.kind === 'manual') {
+      const h = await reloadManual(p.category);
+      if (p.category === 'install') manualInstall = h;
+    }
+    const paid = p.category === 'install' ? await syncInstallPaid(r.history || [], manualInstall) : null;
+    toast?.(`${p.roundNo}차 ${_CAT_LABEL[p.category] || ''} 정정 완료${paid != null ? ` · 설치비 기성금액 ${paid.toLocaleString()}원 반영` : ''}`, 'success');
+    if (paid != null) onSaved?.()?.catch?.(() => {});
+  };
+
   return (
     <>
     {/* 출력 미리보기 · A4 세로 용지 모양 */}
@@ -1082,15 +1185,15 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       open={open}
       onClose={onClose}
       width="wide"
-      title="🧾 설치비 지급 품의서 생성"
+      title="지출품의서"
       subtitle={`계약 ${contractCode(contract)} · ${contract.projectName}`}
       footer={
-        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', width:'100%', gap:8}}>
-          <div style={{fontSize:11, color:'var(--ink-3)'}}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', width:'100%', gap:8, flexWrap:'wrap'}}>
+          <div className="xp-foot-note" style={{fontSize:11, color:'var(--ink-3)'}}>
             <span style={{color:'var(--pos)', fontWeight:700}}>●</span>
             {' '}저장하면 이력에 기록됩니다. 출력·PDF는 재출력 가능.
           </div>
-          <div style={{display:'flex', gap:6}}>
+          <div className="xp-foot-btns" style={{display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end'}}>
             <button className="btn-ghost" onClick={onClose} disabled={busy}>취소</button>
             <button
               className="btn-ghost"
@@ -1126,504 +1229,438 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       }
     >
       {/* ═══════════════════════════════════════════════════════════
-          📄 문서 헤더 · "지출품의서" + 품의제목 + 요청금액
-          (아래 계약 요약/입력 블록과 같은 카드 스타일로 통일)
+          v3.17 · Linear 스타일 — 왼쪽: 총액·결재 전 확인·청구 항목 목록 / 오른쪽: 요청 정보·손익·수금 대비 지급
           ═══════════════════════════════════════════════════════════ */}
-      <div className="doc-print-header" style={{marginBottom:16}}>
-        {/* 대제목 */}
-        <div style={{textAlign:'center', padding:'2px 0 12px'}}>
-          <div style={{
-            display:'inline-block', fontSize:22, fontWeight:800, color:'var(--green-800)',
-            letterSpacing:'0.42em', paddingLeft:'0.42em',
-          }}>
-            지 출 품 의 서
-          </div>
-          <div style={{
-            height:3, borderRadius:2, marginTop:8,
-            background:'linear-gradient(90deg, var(--green-800) 0%, var(--green-600, #3F7A5C) 55%, rgba(63,122,92,0.08) 100%)',
-          }}/>
-        </div>
-
-        {/* 품의제목 */}
-        <div style={{
-          display:'flex', alignItems:'center', gap:10, flexWrap:'wrap',
-          padding:'10px 14px', marginBottom:8,
-          background:'var(--surface-2)', border:'1px solid var(--line)', borderRadius:8,
-        }}>
-          <span style={{fontSize:10.5, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.05em'}}>품의제목</span>
-          <span style={{fontSize:13.5, fontWeight:800, color:'var(--ink-1)', letterSpacing:'-0.02em'}}>
-            『{contract.projectName || '(프로젝트명 없음)'}』
-          </span>
-          <input
-            value={form.docSubject}
-            onChange={e => setForm({...form, docSubject: e.target.value})}
-            placeholder="예: 설치비 지급요청의 건 / 자재비 지급요청의 건"
-            className="doc-subject-input"
-            style={{
-              flex:1, minWidth:220,
-              padding:'6px 10px', fontSize:12.5, fontWeight:600,
-              border:'1px solid var(--line)', borderRadius:6,
-              background:'#fff', outline:'none', fontFamily:'inherit',
-            }}
-          />
-        </div>
-
-        {/* ⑦ 계약 요약 헤더 (화면용 · 인쇄 시 숨김) — 🆕 거래처·계약일·품의일 그리드보다 위로 이동 */}
-        <div className="screen-only">
-          <ExpenseContractHeader
-            contract={contract}
-            paidTotal={paidTotal}
-            paidPct={paidPct}
-            paySplit={paySplit}
-          />
-        </div>
-
-        {/* 거래처 · 계약일 · 품의일 : KPI 타일과 동일한 카드 */}
-        <div style={{display:'grid', gridTemplateColumns:'1.4fr 1fr 1fr', gap:5, marginBottom:8}}>
-          {[
-            ['거래처', contract.client || '-', false],
-            ['계약일', contract.contractDate ? contract.contractDate.slice(0,10) : '-', true],
-            ['품의일', form.docDate || '-', true],
-          ].map(([label, val, mono]) => (
-            <div key={label} style={{padding:'8px 10px', background:'#fff', border:'1px solid var(--line)', borderRadius:6}}>
-              <div style={{fontSize:9.5, color:'var(--ink-3)', fontWeight:700, letterSpacing:'0.03em', display:'flex', alignItems:'center', gap:4}}>
-                <span style={{width:5, height:5, borderRadius:'50%', background:'var(--green-600, #3F7A5C)', display:'inline-block'}}/>
-                {label}
-              </div>
-              <div style={{
-                fontSize:13.5, fontWeight:800, color:'var(--ink-1)', marginTop:2,
-                fontFamily: mono ? 'ui-monospace,Menlo,monospace' : 'inherit',
-                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
-              }}>{val}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* 금회 요청금액 (한글 + ￦ 숫자) */}
-        <div style={{
-          display:'grid', gridTemplateColumns:'auto 1fr auto', alignItems:'center', gap:14,
-          padding:'12px 16px',
-          background:'linear-gradient(180deg, var(--green-50), var(--green-25, #F7FAF7))',
-          border:'1px solid #C9DFD1', borderRadius:10,
-        }}>
-          <div>
-            <div style={{fontSize:11.5, fontWeight:800, color:'var(--green-800)'}}>금회 요청금액</div>
-            <div style={{fontSize:9.5, color:'var(--ink-3)', fontWeight:600, marginTop:1}}>(VAT 포함)</div>
-          </div>
-          <div style={{textAlign:'center', fontSize:13.5, fontWeight:700, color:'var(--ink-1)', letterSpacing:'0.02em'}}>
-            {requestAmount > 0
-              ? numberToKoreanAmount(grandTotal)
-              : <span style={{color:'var(--ink-3)', fontWeight:600}}>금액 미입력</span>}
-          </div>
-          <div style={{fontSize:18, fontWeight:800, color:'var(--green-800)', fontVariantNumeric:'tabular-nums', whiteSpace:'nowrap'}}>
-            ￦ {grandTotal.toLocaleString('ko-KR')}
-          </div>
-        </div>
-        <div style={{fontSize:10, color:'var(--ink-3)', textAlign:'right', padding:'4px 4px 0'}}>
-          {/* 🆕 v3: 체크된(이번 회차 포함) 항목만 "+"로 나열, 미포함 항목은 괄호로 별도 안내 */}
-          {[
-            includeInstall && requestAmount > 0 && `설치비 ${requestAmount.toLocaleString('ko-KR')}원`,
-            includeProduct && productRequestAmount > 0 && `제품대 ${productRequestAmount.toLocaleString('ko-KR')}원`,
-            includeCommission && commissionRequestAmount > 0 && `영업수수료 ${commissionRequestAmount.toLocaleString('ko-KR')}원`,
-            includeEtc && etcRequestAmount > 0 && `기타경비 ${etcRequestAmount.toLocaleString('ko-KR')}원`,
-          ].filter(Boolean).join(' + ') || '항목별 기성 관리에서 포함할 항목을 체크하세요'}
-          {(!includeInstall || !includeProduct || !includeCommission || !includeEtc) && (
-            <> ({[
-              !includeInstall && '설치비',
-              !includeProduct && '제품대',
-              !includeCommission && '영업수수료',
-              !includeEtc && '기타경비',
-            ].filter(Boolean).join('·')}는 체크 해제 · 별도 정산)</>
-          )}
-        </div>
-      </div>
-
-      {/* v3 ① : 지급 요청 정보 (지급대상보다 위로 이동) */}
-      <SectionHead title="지급 요청 정보" badge="순서 변경" />
-
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1.25fr 1fr 0.6fr', gap:10, marginBottom:10}}>
-        <div>
-          <label style={_labelSt}>영업담당</label>
-          <input value={form.manager} onChange={e => setForm({...form, manager: e.target.value})} placeholder="예: 이상규 이사" style={_inputSt}/>
-        </div>
-        <div>
-          <label style={_labelSt}>출력 회사명 (하단 서명란)</label>
-          <select
-            value={companyCustom ? '_custom' : form.companyName}
-            onChange={e => {
-              const v = e.target.value;
-              if (v === '_custom') { setCompanyCustom(true); setForm({...form, companyName: ''}); return; }
-              setCompanyCustom(false);
-              setForm({...form, companyName: v});
-              try { localStorage.setItem(EXPENSE_COMPANY_KEY, v); } catch {}
-            }}
-            style={_inputSt}
-          >
-            {EXPENSE_COMPANY_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
-            <option value="_custom">직접 입력…</option>
-          </select>
-          {companyCustom && (
+      <div className="xp-layout">
+        <div style={{minWidth:0}}>
+          {/* 품의제목 */}
+          <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:16}}>
+            <span style={{fontSize:12, color:'var(--ink-3)'}}>품의제목</span>
+            <span style={{fontSize:14, fontWeight:700, color:'var(--ink-1)'}}>『{contract.projectName || '(프로젝트명 없음)'}』</span>
             <input
-              value={form.companyName}
-              onChange={e => {
-                setForm({...form, companyName: e.target.value});
-                try { localStorage.setItem(EXPENSE_COMPANY_KEY, e.target.value); } catch {}
-              }}
-              placeholder="출력에 표시할 회사명 입력"
-              style={{..._inputSt, marginTop:5}}
+              value={form.docSubject}
+              onChange={e => setForm({...form, docSubject: e.target.value})}
+              placeholder="예: 설치비 지급요청의 건 / 자재비 지급요청의 건"
+              aria-label="품의제목"
+              className="doc-subject-input"
+              style={{flex:1, minWidth:200, height:34, boxSizing:'border-box', padding:'0 10px', fontSize:13, fontWeight:600, border:'1px solid var(--line-2)', borderRadius:6, background:'#fff', outline:'none', fontFamily:'inherit'}}
             />
-          )}
-        </div>
-        <div>
-          <label style={_labelSt}>작성일 *</label>
-          <input type="date" value={form.docDate} onChange={e => setForm({...form, docDate: e.target.value})} style={{..._inputSt, fontFamily:'ui-monospace,Menlo,monospace'}}/>
-        </div>
-        <div>
-          <label style={_labelSt}>기성 회차 *</label>
-          <input value={form.paymentCount} onChange={e => setForm({...form, paymentCount: e.target.value})} placeholder="1" style={{..._inputSt, fontWeight:700}}/>
-        </div>
-      </div>
+          </div>
 
-      {/* v3 ② : "구분"(대표 항목) 신규 + 전회 기성 이력 */}
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:4}}>
-        <div>
-          <label style={_labelSt}><b>구분 (이 지급 요청의 항목) *</b> <span style={{fontSize:8.5, fontWeight:800, background:'var(--pos)', color:'#fff', padding:'0 5px', borderRadius:7, marginLeft:4, letterSpacing:'0.02em', verticalAlign:1}}>NEW</span></label>
-          <select
-            value={docCategory}
-            onChange={e => setDocCategory(e.target.value)}
-            style={{..._inputSt, border:`1.5px solid ${docCatMeta.accent.strong}`, background:docCatMeta.accent.soft}}
-          >
-            <option value="install">설치비</option>
-            <option value="product">제품대</option>
-            <option value="commission">영업수수료</option>
-            <option value="etc">기타경비</option>
-          </select>
-        </div>
-        <div>
-          <PreviousRoundDropdown
-            history={expenseHistory}
-            selected={selectedRound}
-            onSelect={handleRoundSelect}
-          />
-          {loadingHistory && <div style={{fontSize:11, color:'var(--ink-3)', marginTop:4}}>이력 불러오는 중…</div>}
-          {selectedRound && (() => {
-            const r = expenseHistory.find(h => String(h.no) === String(selectedRound));
-            return r && r.no ? (
-              <button type="button" onClick={() => handleDeleteRound(r)} disabled={deletingRound === r.no}
-                title="잘못 저장한 회차 기록 삭제"
-                style={{marginTop:6, padding:'4px 10px', fontSize:11, fontWeight:700, background:'#fff', color:'var(--neg, #B3452D)', border:'1px solid #E8C2B8', borderRadius:6, cursor: deletingRound === r.no ? 'wait' : 'pointer'}}>
-                {deletingRound === r.no ? '삭제 중…' : `🗑 ${r.roundNo}차 기록 삭제`}
+          {/* 금회 지급 총액 + 항목 비중 */}
+          <section aria-label="금회 지급 총액">
+            <div className="xp-total">
+              <div>
+                <div className="cap">금회 지급 총액 (VAT 포함) · {form.paymentCount}차</div>
+                <div className="num">{grandTotal.toLocaleString('ko-KR')}<small>원</small></div>
+                <div className="kor">{grandTotal > 0 ? numberToKoreanAmount(grandTotal) : '포함된 금액이 없습니다'}</div>
+              </div>
+              <div className="xp-meta">
+                <div>누적 지급 {Math.round(prevAll).toLocaleString('ko-KR')} → <b style={{color:'var(--ink-1)', fontWeight:600}}>{Math.round(afterAll).toLocaleString('ko-KR')}원</b></div>
+                <div>{segs.length}개 항목 포함 · 4개 중</div>
+              </div>
+            </div>
+            <div className="xp-segbar" aria-hidden="true">
+              {segs.map(s => <span key={s.key} style={{width: s.w, background: s.color}}/>)}
+            </div>
+            <div className="xp-legend">
+              {segs.map(s => <span key={s.key}><i style={{background:s.color}}/>{s.name} <b>{Math.round(s.amt).toLocaleString('ko-KR')}</b></span>)}
+            </div>
+          </section>
+
+          {/* 결재 전 확인 */}
+          {alerts.length > 0 && (
+            <div className="xp-alert" role="status">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{flex:'none', marginTop:2}}><path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3"/><path d="M8 11.3v.4"/></svg>
+              <div>
+                <b>결재 전 확인 {alerts.length}건</b>
+                <ul>{alerts.map((a, i) => <li key={i}>{a}</li>)}</ul>
+              </div>
+            </div>
+          )}
+
+          {/* 청구 항목 — 제품대 → 설치비 → 기타경비 → 영업수수료 */}
+          <div className="xp-list-head">
+            <h3>청구 항목</h3>
+            <span className="lg">
+              <span><i style={{background:'var(--ink-3)'}}/>지난 회차 누계</span>
+              <span><i style={{background:'rgba(107,112,105,.35)'}}/>이번 회차</span>
+              <span>· 금회 요청액</span>
+            </span>
+          </div>
+
+          {/* 1. 제품대 */}
+          <CategoryRow
+            catKey="product" name="제품대" color={EXPENSE_CAT_COLOR.product}
+            open={openCat === 'product'} onToggleOpen={() => setOpenCat(o => o === 'product' ? null : 'product')}
+            toggle={{ checked: includeProduct, onChange: setIncludeProduct }}
+            banner={budgetBanner('product', productTotal > 0 && Math.round(productTotal) !== productBudgetNum ? (
+              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                제품 내역서 합계 <b>{Math.round(productTotal).toLocaleString()}원</b>
+                <button type="button" onClick={() => setProductBudget(String(Math.round(productTotal)))}
+                  style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
+                  제품대 총액에 적용
+                </button>
+              </span>
+            ) : null)}
+            vendorDetail={vendorDetailOf(productVendorName)}
+            note={catNotes.product} onNoteChange={setCatNote('product')}
+            vendorValue={productVendorName} onVendorChange={setProductVendorName} vendorOptions={vendorOptions}
+            vendorPlaceholder="제품대 지급 업체명" vendorLabel="제품대"
+            onSaveVendor={() => handleSaveCategoryVendorName('product', productVendorName, '제품대')}
+            savingVendor={savingVendorCat === 'product'}
+            totalAmount={productBudget}
+            onTotalChange={setProductBudget}
+            totalNote={productBudgetNum !== (baseBudgets.product || 0) ? '(수정됨)' : ''}
+            rounds={productRounds}
+            manualRows={manualHist.product} onManualRowsChange={setManualRows('product')}
+            onSaveManual={() => handleSaveManual('product')} savingManual={savingManualKind === 'product'} manualSavedAt={histSavedAt.product}
+            onDeleteRound={handleDeleteRound}
+            deletingNo={deletingRound}
+            currentAmount={catCurrentInput.product}
+            onAmountChange={setProductAmount}
+            currentRoundLabel={`${form.paymentCount}차`} currentDate={form.docDate}
+            corrections={correctionsOf('product')} canCorrect={canCorrect} onCorrect={handleCorrect}
+            detailTitle="제품 내역서 (장비대)"
+            detailActions={<>
+              {saveItemsButton('product')}
+              <button
+                onClick={() => importProductXlsx('drive')}
+                disabled={!!importing}
+                style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='product-drive' ? 'var(--surface-2)' : '#f0f7fb', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
+                {importing === 'product-drive' ? '⏳...' : '📁 Drive'}
               </button>
-            ) : null;
-          })()}
-        </div>
-      </div>
-      <div style={{fontSize:10.5, color:'var(--ink-3)', margin:'-2px 0 10px'}}>
-        ↳ 선택한 구분에 따라 아래 "금회 요청금액" 라벨과 값이 자동으로 맞춰집니다. (여러 항목을 함께
-        청구할 때는 아래 항목별 카드에서 각각 체크 — 이 값은 그중 대표 항목일 뿐입니다)
-      </div>
+              <button
+                onClick={() => importProductXlsx('local')}
+                disabled={!!importing}
+                style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='product-local' ? 'var(--surface-2)' : '#fff', color:'var(--ink-2)', border:'1px solid var(--line)', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
+                {importing === 'product-local' ? '⏳...' : '💻 PC'}
+              </button>
+              <button
+                onClick={() => createTemplateInDrive('product')}
+                disabled={!!importing}
+                title="Drive에 파일이 없을 때 — 기본 양식(빈 표)으로 새 파일을 만들어 Drive에 저장합니다"
+                style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='product-template' ? 'var(--surface-2)' : '#fff', color:'var(--green-800)', border:'1px dashed #C9DFD1', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
+                {importing === 'product-template' ? '⏳...' : '🆕 새 양식 만들기'}
+              </button>
+              {productFileUrl && (
+                <button
+                  onClick={() => window.open(productFileUrl, '_blank', 'noopener')}
+                  title="Drive에서 이 파일을 새 탭으로 열어 직접 값을 수정합니다 (수정 후에는 &quot;📁 Drive&quot; 버튼으로 다시 불러오세요)"
+                  style={{padding:'5px 10px', fontSize:11, fontWeight:600, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
+                  🔗 파일 열기
+                </button>
+              )}
+            </>}
+            detailBanner={productSummary && (
+              <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, padding:'10px 12px', background:'var(--bronze-50, #FBF6E9)', border:'1px solid #ECD9AE', borderRadius:8}}>
+                <div>
+                  <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>파일</div>
+                  <div style={{fontSize:11.5, color:'var(--ink-1)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={productFilename}>📄 {productFilename}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>품목 수</div>
+                  <div style={{fontSize:12.5, color:'var(--ink-1)', fontWeight:700}}>{productItems.length}건</div>
+                </div>
+                <div>
+                  <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>출고가</div>
+                  <div style={{fontSize:12.5, color:'var(--ink-2)', fontWeight:700, fontVariantNumeric:'tabular-nums'}}>{Math.round(productSummary.totalList||0).toLocaleString()}원</div>
+                </div>
+                <div>
+                  <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>실효 DC율</div>
+                  <div style={{fontSize:12.5, color:'var(--bronze-800, #8f6d3a)', fontWeight:700}}>{(productSummary.effectiveDc*100).toFixed(1)}%</div>
+                </div>
+              </div>
+            )}
+          >
+            {productItems.length === 0 && !productSummary && (
+              <div style={{padding:'16px 12px', textAlign:'center', background:'#fff', border:'1.5px dashed var(--line-2)', borderRadius:8, color:'var(--ink-3)', fontSize:12}}>
+                제품 내역서가 없습니다. 위 <b>Drive/PC</b> 버튼으로 엑셀을 가져오거나 아래에서 항목을 직접 추가하세요.
+              </div>
+            )}
+            {(productItems.length > 0 || productSummary) && (
+              <ItemsTable
+                mode="product"
+                items={productItems}
+                setItems={setProductItems}
+                filename={productFilename}
+                onClear={() => { setProductItems([]); setProductSummary(null); setProductFilename(''); }}
+              />
+            )}
+            {productItems.length === 0 && !productSummary && (
+              <button
+                onClick={() => setProductItems([{ name:'', model:'', unit:'대', qty:'', unitPrice:'', listPrice:'', dcRate:0 }])}
+                style={{alignSelf:'flex-start', padding:'5px 12px', fontSize:11.5, fontWeight:600, background:'#fff', color:'var(--green-800)', border:'1px dashed #C9DFD1', borderRadius:6, cursor:'pointer'}}>
+                + 제품 항목 직접 추가
+              </button>
+            )}
+          </CategoryRow>
 
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10}}>
-        <div>
-          <label style={_labelSt}><b>금회 요청금액 ({docCatMeta.label}) *</b></label>
-          <input
-            type="number"
-            value={docCatMeta.amount}
-            onChange={e => docCatMeta.onChange(e.target.value)}
-            style={{..._inputSt, textAlign:'right', fontWeight:800, color:docCatMeta.accent.strong, borderColor:docCatMeta.accent.mid, background:docCatMeta.accent.soft}}
-          />
-        </div>
-        <div>
-          <label style={_labelSt}>첨부서류</label>
-          <input value={form.attachments} onChange={e => setForm({...form, attachments: e.target.value})} placeholder="세금계산서, 통장사본 1부" style={_inputSt}/>
-        </div>
-      </div>
+          {/* 2. 설치비 */}
+          <CategoryRow
+            catKey="install" name="설치비" color={EXPENSE_CAT_COLOR.install}
+            open={openCat === 'install'} onToggleOpen={() => setOpenCat(o => o === 'install' ? null : 'install')}
+            toggle={{ checked: includeInstall, onChange: setIncludeInstall }}
+            banner={budgetBanner('install')}
+            vendorDetail={installVendorDetail}
+            note={catNotes.install} onNoteChange={setCatNote('install')}
+            vendorValue={form.subName} onVendorChange={v => {
+              const known = ((data && data.subcontractors) || []).some(x => x && String(x.name || '').trim() === String(v).trim());
+              if (known) pickInstallVendor(String(v).trim()); else setForm({...form, subName: v});
+            }}
+            vendorOptions={vendorOptions}
+            onVendorPick={pickInstallVendor}
+            vendorPlaceholder="설치비 지급 업체명" vendorLabel="설치비"
+            onSaveVendor={handleSaveFullVendor}
+            savingVendor={savingVendorCat === 'install'}
+            totalAmount={installBudget}
+            onTotalChange={setInstallBudget}
+            totalNote={installBudgetNum !== (baseBudgets.install || 0) ? '(수정됨)' : ''}
+            rounds={previousRounds}
+            manualRows={manualHist.install} onManualRowsChange={setManualRows('install')}
+            onSaveManual={() => handleSaveManual('install')} savingManual={savingManualKind === 'install'} manualSavedAt={histSavedAt.install}
+            currentAmount={catCurrentInput.install}
+            onAmountChange={v => setForm({...form, requestAmount: v})}
+            currentRoundLabel={`${form.paymentCount}차`} currentDate={form.docDate}
+            onDeleteRound={handleDeleteRound}
+            deletingNo={deletingRound}
+            corrections={correctionsOf('install')} canCorrect={canCorrect} onCorrect={handleCorrect}
+            detailTitle="설치비 내역서"
+            detailActions={<>
+              {saveItemsButton('install')}
+              <button
+                onClick={() => importInstallXlsx('drive')}
+                disabled={!!importing}
+                style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='install-drive' ? 'var(--surface-2)' : '#f0f7fb', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
+                {importing === 'install-drive' ? '⏳...' : '📁 Drive'}
+              </button>
+              <button
+                onClick={() => importInstallXlsx('local')}
+                disabled={!!importing}
+                style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='install-local' ? 'var(--surface-2)' : '#fff', color:'var(--ink-2)', border:'1px solid var(--line)', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
+                {importing === 'install-local' ? '⏳...' : '💻 PC'}
+              </button>
+              <button
+                onClick={() => createTemplateInDrive('install')}
+                disabled={!!importing}
+                title="Drive에 파일이 없을 때 — 기본 양식(빈 표)으로 새 파일을 만들어 Drive에 저장합니다"
+                style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='install-template' ? 'var(--surface-2)' : '#fff', color:'var(--green-800)', border:'1px dashed #C9DFD1', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
+                {importing === 'install-template' ? '⏳...' : '🆕 새 양식 만들기'}
+              </button>
+              {installFileUrl && (
+                <button
+                  onClick={() => window.open(installFileUrl, '_blank', 'noopener')}
+                  title="Drive에서 이 파일을 새 탭으로 열어 직접 값을 수정합니다 (수정 후에는 &quot;📁 Drive&quot; 버튼으로 다시 불러오세요)"
+                  style={{padding:'5px 10px', fontSize:11, fontWeight:600, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
+                  🔗 파일 열기
+                </button>
+              )}
+            </>}
+          >
+            <ItemsTable
+              mode="install"
+              items={installItems}
+              setItems={setInstallItems}
+              filename={installFilename}
+              onClear={() => { setInstallItems([{ name:'', spec:'', qty:'', unit:'식', unitPrice:'', note:'' }]); setInstallFilename(''); }}
+            />
+          </CategoryRow>
 
-      {/* ⑤ 비고 사항 */}
-      <div style={{marginBottom:22}}>
-        <label style={_labelSt}>비고 사항</label>
-        <textarea
-          rows={3}
-          value={form.note}
-          onChange={e => setForm({...form, note: e.target.value})}
-          placeholder="지급 관련 특이사항, 지급 조건, 확인 사항 등을 자유롭게 입력하세요"
-          style={{..._inputSt, resize:'vertical', lineHeight:1.5}}
-        />
-      </div>
+          {/* 3. 기타경비 */}
+          <CategoryRow
+            catKey="etc" name="기타경비" color={EXPENSE_CAT_COLOR.etc}
+            open={openCat === 'etc'} onToggleOpen={() => setOpenCat(o => o === 'etc' ? null : 'etc')}
+            toggle={{ checked: includeEtc, onChange: setIncludeEtc }}
+            banner={budgetBanner('etc')}
+            vendorDetail={vendorDetailOf(etcVendorName)}
+            note={catNotes.etc} onNoteChange={setCatNote('etc')}
+            vendorValue={etcVendorName} onVendorChange={setEtcVendorName} vendorOptions={vendorOptions}
+            vendorPlaceholder="기타경비 지급 업체명" vendorLabel="기타경비"
+            onSaveVendor={() => handleSaveCategoryVendorName('etc', etcVendorName, '기타경비')}
+            savingVendor={savingVendorCat === 'etc'}
+            totalAmount={etcBudget}
+            onTotalChange={setEtcBudget}
+            totalNote={etcBudgetNum !== (baseBudgets.etc || 0) ? '(수정됨)' : ''}
+            rounds={etcRounds}
+            manualRows={manualHist.etc} onManualRowsChange={setManualRows('etc')}
+            onSaveManual={() => handleSaveManual('etc')} savingManual={savingManualKind === 'etc'} manualSavedAt={histSavedAt.etc}
+            onDeleteRound={handleDeleteRound}
+            deletingNo={deletingRound}
+            currentAmount={catCurrentInput.etc}
+            onAmountChange={setEtcAmount}
+            currentRoundLabel={`${form.paymentCount}차`} currentDate={form.docDate}
+            corrections={correctionsOf('etc')} canCorrect={canCorrect} onCorrect={handleCorrect}
+            detailTitle="기타 경비 내역"
+            detailActions={saveItemsButton('etc')}
+          >
+            <ItemsTable mode="simple" items={etcItems} setItems={setEtcItems} showReceipt/>
+          </CategoryRow>
 
-      {/* v3 ①(순서 변경) : 지급대상 (도급업체) — 지급 요청 정보 아래로 이동, 저장 버튼은 아래 카드로 */}
-      <SectionHead title="지급대상" badge="순서 변경" />
-      <SubcontractorBlock
-        form={form}
-        setForm={setForm}
-        data={data}
-        clientOptions={data?.clients || []}
-        onSave={handleSaveSubcontractorInfo}
-        saving={savingVendorCat === 'main'}
-      />
+          {/* 4. 영업수수료 */}
+          <CategoryRow
+            catKey="commission" name="영업수수료" color={EXPENSE_CAT_COLOR.commission}
+            open={openCat === 'commission'} onToggleOpen={() => setOpenCat(o => o === 'commission' ? null : 'commission')}
+            toggle={{ checked: includeCommission, onChange: setIncludeCommission }}
+            banner={budgetBanner('commission')}
+            vendorDetail={vendorDetailOf(commissionVendorName)}
+            note={catNotes.commission} onNoteChange={setCatNote('commission')}
+            vendorValue={commissionVendorName} onVendorChange={setCommissionVendorName} vendorOptions={vendorOptions}
+            vendorPlaceholder="영업수수료 지급 대상" vendorLabel="영업수수료"
+            onSaveVendor={() => handleSaveCategoryVendorName('commission', commissionVendorName, '영업수수료')}
+            savingVendor={savingVendorCat === 'commission'}
+            totalAmount={commissionBudget}
+            onTotalChange={setCommissionBudget}
+            totalNote={commissionBudgetNum !== (baseBudgets.commission || 0) ? '(수정됨)' : ''}
+            rounds={commissionRounds}
+            manualRows={manualHist.commission} onManualRowsChange={setManualRows('commission')}
+            onSaveManual={() => handleSaveManual('commission')} savingManual={savingManualKind === 'commission'} manualSavedAt={histSavedAt.commission}
+            onDeleteRound={handleDeleteRound}
+            deletingNo={deletingRound}
+            currentAmount={catCurrentInput.commission}
+            onAmountChange={setCommissionAmount}
+            currentRoundLabel={`${form.paymentCount}차`} currentDate={form.docDate}
+            corrections={correctionsOf('commission')} canCorrect={canCorrect} onCorrect={handleCorrect}
+            detailTitle="영업 수수료 내역"
+            detailActions={saveItemsButton('commission')}
+          >
+            <ItemsTable mode="simple" items={commissionItems} setItems={setCommissionItems} showReceipt/>
+          </CategoryRow>
 
-      {/* v3 ③④⑤⑥ : 항목별 기성 관리 — 카드 순서(제품대→설치비→기타경비→영업수수료) + 내역서 병합 + 탭 */}
-      <SectionHead title="항목별 기성 관리" />
-      <div style={{fontSize:11, color:'var(--ink-3)', background:'var(--surface-2)', border:'1px dashed var(--line-2)', borderRadius:8, padding:'8px 12px', marginBottom:14}}>
-        💡 카드마다 <b>[요약]</b> / <b>[상세내역]</b> 탭이 있습니다. "상세내역" 탭에서 그 항목의 내역서(품목표) +
-        회차별 지급 이력을 한 카드 안에서 함께 볼 수 있습니다. "이번 회차 포함" 토글을 꺼두면 품목·금액은
-        참고용으로만 저장되고, 금회 요청·출력물의 지급대상·지급 내역 요약에는 반영되지 않습니다.
-      </div>
-
-      {/* 1. 제품대(장비대) 기성 */}
-      {budgetBanner('product', productTotal > 0 && Math.round(productTotal) !== productBudgetNum ? (
-        <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
-          제품 내역서 합계 <b>{Math.round(productTotal).toLocaleString()}원</b>
-          <button type="button" onClick={() => setProductBudget(String(Math.round(productTotal)))}
-            style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
-            제품대 총액에 적용
-          </button>
-        </span>
-      ) : null)}
-      <CategoryCard
-        icon="📦" name="제품대(장비대) 기성" accent="blue"
-        toggle={{ checked: includeProduct, onChange: setIncludeProduct, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorDetail={vendorDetailOf(productVendorName)}
-        note={catNotes.product} onNoteChange={setCatNote('product')}
-        vendorValue={productVendorName} onVendorChange={setProductVendorName} vendorOptions={vendorOptions}
-        vendorPlaceholder="제품대 지급 업체명" vendorLabel="제품대"
-        onSaveVendor={() => handleSaveCategoryVendorName('product', productVendorName, '제품대')}
-        savingVendor={savingVendorCat === 'product'}
-        totalAmount={productBudget}
-        onTotalChange={setProductBudget}
-        totalNote={productBudgetNum !== (baseBudgets.product || 0) ? '(수정됨)' : '(계약관리 시트)'}
-        rounds={productRounds}
-        manualRows={manualHist.product} onManualRowsChange={setManualRows('product')}
-        onSaveManual={() => handleSaveManual('product')} savingManual={savingManualKind === 'product'} manualSavedAt={histSavedAt.product}
-        onDeleteRound={handleDeleteRound}
-        deletingNo={deletingRound}
-        currentAmount={docCategory === 'product' ? docCatMeta.amount : productRequestAmount}
-        onAmountChange={setProductAmount}
-        currentRoundLabel={`${form.paymentCount}차`}
-        detailTitle="📄 제품 내역서 (장비대)"
-        detailActions={<>
-          {saveItemsButton('product')}
-          <button
-            onClick={() => importProductXlsx('drive')}
-            disabled={!!importing}
-            style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='product-drive' ? 'var(--surface-2)' : '#f0f7fb', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
-            {importing === 'product-drive' ? '⏳...' : '📁 Drive'}
-          </button>
-          <button
-            onClick={() => importProductXlsx('local')}
-            disabled={!!importing}
-            style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='product-local' ? 'var(--surface-2)' : '#fff', color:'var(--ink-2)', border:'1px solid var(--line)', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
-            {importing === 'product-local' ? '⏳...' : '💻 PC'}
-          </button>
-          <button
-            onClick={() => createTemplateInDrive('product')}
-            disabled={!!importing}
-            title="Drive에 파일이 없을 때 — 기본 양식(빈 표)으로 새 파일을 만들어 Drive에 저장합니다"
-            style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='product-template' ? 'var(--surface-2)' : '#fff', color:'var(--green-800)', border:'1px dashed #C9DFD1', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
-            {importing === 'product-template' ? '⏳...' : '🆕 새 양식 만들기'}
-          </button>
-          {productFileUrl && (
-            <button
-              onClick={() => window.open(productFileUrl, '_blank', 'noopener')}
-              title="Drive에서 이 파일을 새 탭으로 열어 직접 값을 수정합니다 (수정 후에는 &quot;📁 Drive&quot; 버튼으로 다시 불러오세요)"
-              style={{padding:'5px 10px', fontSize:11, fontWeight:600, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
-              🔗 파일 열기
-            </button>
-          )}
-        </>}
-        detailBanner={productSummary && (
-          <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:10, padding:'10px 12px', background:'var(--bronze-50, #FBF6E9)', border:'1px solid #ECD9AE', borderRadius:8}}>
-            <div>
-              <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>파일</div>
-              <div style={{fontSize:11.5, color:'var(--ink-1)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={productFilename}>📄 {productFilename}</div>
-            </div>
-            <div>
-              <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>품목 수</div>
-              <div style={{fontSize:12.5, color:'var(--ink-1)', fontWeight:700}}>{productItems.length}건</div>
-            </div>
-            <div>
-              <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>출고가</div>
-              <div style={{fontSize:12.5, color:'var(--ink-2)', fontWeight:700, fontVariantNumeric:'tabular-nums'}}>{Math.round(productSummary.totalList||0).toLocaleString()}원</div>
-            </div>
-            <div>
-              <div style={{fontSize:10, color:'var(--bronze-800, #8f6d3a)', fontWeight:700, letterSpacing:'0.05em', marginBottom:2}}>실효 DC율</div>
-              <div style={{fontSize:12.5, color:'var(--bronze-800, #8f6d3a)', fontWeight:700}}>{(productSummary.effectiveDc*100).toFixed(1)}%</div>
-            </div>
+          {/* 지급대상 (도급업체) */}
+          <div className="xp-list-head" style={{marginTop:32}}>
+            <h3>지급대상 (도급업체)</h3>
+            <span className="lg">설치비 업체 · 다른 항목은 항목별 업체명 사용</span>
           </div>
-        )}
-      >
-        {productItems.length === 0 && !productSummary && (
-          <div style={{padding:'20px 12px', textAlign:'center', background:'#fff', border:'1.5px dashed var(--line-2)', borderRadius:8, color:'var(--ink-3)', fontSize:12, marginBottom:14}}>
-            📦 제품 내역서가 없습니다. 우측 상단 <b>Drive/PC</b> 버튼으로 엑셀 임포트하거나 아래에서 항목을 직접 추가하세요.
+          <div style={{paddingTop:12}}>
+            <SubcontractorBlock
+              form={form}
+              setForm={setForm}
+              data={data}
+              clientOptions={data?.clients || []}
+              onSave={handleSaveSubcontractorInfo}
+              saving={savingVendorCat === 'main'}
+            />
           </div>
-        )}
-        {(productItems.length > 0 || productSummary) && (
-          <ItemsTable
-            mode="product"
-            items={productItems}
-            setItems={setProductItems}
-            filename={productFilename}
-            onClear={() => { setProductItems([]); setProductSummary(null); setProductFilename(''); }}
-          />
-        )}
-        {productItems.length === 0 && !productSummary && (
-          <button
-            onClick={() => setProductItems([{ name:'', model:'', unit:'대', qty:'', unitPrice:'', listPrice:'', dcRate:0 }])}
-            style={{padding:'5px 12px', fontSize:11.5, fontWeight:600, background:'#fff', color:'var(--green-800)', border:'1px dashed #C9DFD1', borderRadius:6, cursor:'pointer'}}>
-            + 제품 항목 직접 추가
-          </button>
-        )}
-      </CategoryCard>
+        </div>
 
-      {/* 2. 설치비 기성 */}
-      {budgetBanner('install')}
-      <CategoryCard
-        icon="🔧" name="설치비 기성" accent="green"
-        toggle={{ checked: includeInstall, onChange: setIncludeInstall, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorDetail={installVendorDetail}
-        note={catNotes.install} onNoteChange={setCatNote('install')}
-        vendorValue={form.subName} onVendorChange={v => {
-          const known = ((data && data.subcontractors) || []).some(x => x && String(x.name || '').trim() === String(v).trim());
-          if (known) pickInstallVendor(String(v).trim()); else setForm({...form, subName: v});
-        }}
-        vendorOptions={vendorOptions}
-        onVendorPick={pickInstallVendor}
-        vendorPlaceholder="설치비 지급 업체명" vendorLabel="설치비"
-        onSaveVendor={handleSaveFullVendor}
-        savingVendor={savingVendorCat === 'install'}
-        totalAmount={installBudget}
-        onTotalChange={setInstallBudget}
-        totalNote={installBudgetNum !== (baseBudgets.install || 0) ? '(수정됨)' : '(계약관리 시트)'}
-        rounds={previousRounds}
-        manualRows={manualHist.install} onManualRowsChange={setManualRows('install')}
-        onSaveManual={() => handleSaveManual('install')} savingManual={savingManualKind === 'install'} manualSavedAt={histSavedAt.install}
-        currentAmount={docCategory === 'install' ? docCatMeta.amount : requestAmount}
-        onAmountChange={v => setForm({...form, requestAmount: v})}
-        currentRoundLabel={`${form.paymentCount}차`}
-        onDeleteRound={handleDeleteRound}
-        deletingNo={deletingRound}
-        detailTitle="📄 설치비 내역서"
-        detailActions={<>
-          {saveItemsButton('install')}
-          <button
-            onClick={() => importInstallXlsx('drive')}
-            disabled={!!importing}
-            style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='install-drive' ? 'var(--surface-2)' : '#f0f7fb', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
-            {importing === 'install-drive' ? '⏳...' : '📁 Drive'}
-          </button>
-          <button
-            onClick={() => importInstallXlsx('local')}
-            disabled={!!importing}
-            style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='install-local' ? 'var(--surface-2)' : '#fff', color:'var(--ink-2)', border:'1px solid var(--line)', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
-            {importing === 'install-local' ? '⏳...' : '💻 PC'}
-          </button>
-          <button
-            onClick={() => createTemplateInDrive('install')}
-            disabled={!!importing}
-            title="Drive에 파일이 없을 때 — 기본 양식(빈 표)으로 새 파일을 만들어 Drive에 저장합니다"
-            style={{padding:'5px 10px', fontSize:11, fontWeight:600, background: importing==='install-template' ? 'var(--surface-2)' : '#fff', color:'var(--green-800)', border:'1px dashed #C9DFD1', borderRadius:5, cursor: importing ? 'wait' : 'pointer'}}>
-            {importing === 'install-template' ? '⏳...' : '🆕 새 양식 만들기'}
-          </button>
-          {installFileUrl && (
-            <button
-              onClick={() => window.open(installFileUrl, '_blank', 'noopener')}
-              title="Drive에서 이 파일을 새 탭으로 열어 직접 값을 수정합니다 (수정 후에는 &quot;📁 Drive&quot; 버튼으로 다시 불러오세요)"
-              style={{padding:'5px 10px', fontSize:11, fontWeight:600, background:'#fff', color:'#1a5490', border:'1px solid #c8dbe5', borderRadius:5, cursor:'pointer'}}>
-              🔗 파일 열기
-            </button>
-          )}
-        </>}
-      >
-        <ItemsTable
-          mode="install"
-          items={installItems}
-          setItems={setInstallItems}
-          filename={installFilename}
-          onClear={() => { setInstallItems([{ name:'', spec:'', qty:'', unit:'식', unitPrice:'', note:'' }]); setInstallFilename(''); }}
-        />
-      </CategoryCard>
+        {/* ── 오른쪽 속성 패널 ── */}
+        <aside className="xp-side" aria-label="요청 정보">
+          <section>
+            <h3>요청 정보</h3>
+            <div className="xp-prop">
+              <label htmlFor="xp-round">기성 회차</label>
+              <input id="xp-round" value={form.paymentCount} onChange={e => setForm({...form, paymentCount: e.target.value})} placeholder="1" style={{fontWeight:600}}/>
+            </div>
+            <div className="xp-prop">
+              <label htmlFor="xp-date">작성일</label>
+              <input id="xp-date" type="date" value={form.docDate} onChange={e => setForm({...form, docDate: e.target.value})}/>
+            </div>
+            <div className="xp-prop">
+              <label htmlFor="xp-cat">구분</label>
+              <select id="xp-cat" value={docCategory} onChange={e => setDocCategory(e.target.value)} title="이 지급 요청의 대표 항목 (실제 청구 항목은 왼쪽 목록의 체크로 정함)">
+                <option value="install">설치비</option>
+                <option value="product">제품대</option>
+                <option value="commission">영업수수료</option>
+                <option value="etc">기타경비</option>
+              </select>
+            </div>
+            <div className="xp-prop">
+              <label htmlFor="xp-mgr">영업담당</label>
+              <input id="xp-mgr" value={form.manager} onChange={e => setForm({...form, manager: e.target.value})} placeholder="예: 이상규 이사"/>
+            </div>
+            <div className="xp-prop">
+              <label htmlFor="xp-co">출력 회사명</label>
+              <select
+                id="xp-co"
+                value={companyCustom ? '_custom' : form.companyName}
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v === '_custom') { setCompanyCustom(true); setForm({...form, companyName: ''}); return; }
+                  setCompanyCustom(false);
+                  setForm({...form, companyName: v});
+                  try { localStorage.setItem(EXPENSE_COMPANY_KEY, v); } catch {}
+                }}
+              >
+                {EXPENSE_COMPANY_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+                <option value="_custom">직접 입력…</option>
+              </select>
+            </div>
+            {companyCustom && (
+              <div className="xp-prop">
+                <span className="k"/>
+                <input
+                  value={form.companyName}
+                  aria-label="출력 회사명 직접 입력"
+                  onChange={e => {
+                    setForm({...form, companyName: e.target.value});
+                    try { localStorage.setItem(EXPENSE_COMPANY_KEY, e.target.value); } catch {}
+                  }}
+                  placeholder="출력에 표시할 회사명"
+                />
+              </div>
+            )}
+            <div className="xp-prop">
+              <label htmlFor="xp-att">첨부서류</label>
+              <input id="xp-att" value={form.attachments} onChange={e => setForm({...form, attachments: e.target.value})} placeholder="세금계산서, 통장사본 1부"/>
+            </div>
+            <div style={{marginTop:10}}>
+              <PreviousRoundDropdown
+                history={expenseHistory}
+                selected={selectedRound}
+                onSelect={handleRoundSelect}
+              />
+              {loadingHistory && <div style={{fontSize:11, color:'var(--ink-3)', marginTop:4}}>이력 불러오는 중…</div>}
+              {selectedRound && (() => {
+                const r = expenseHistory.find(h => String(h.no) === String(selectedRound));
+                return r && r.no ? (
+                  <button type="button" className="xr-btn" onClick={() => handleDeleteRound(r)} disabled={deletingRound === r.no}
+                    title="잘못 저장한 회차 기록 삭제" style={{marginTop:6, color:'var(--danger)'}}>
+                    {deletingRound === r.no ? '삭제 중…' : `${r.roundNo}차 기록 삭제`}
+                  </button>
+                ) : null;
+              })()}
+            </div>
+            <div style={{marginTop:10}}>
+              <label htmlFor="xp-note" style={{display:'block', fontSize:12, color:'var(--ink-3)', marginBottom:4}}>비고 사항</label>
+              <textarea id="xp-note" rows={3} value={form.note} onChange={e => setForm({...form, note: e.target.value})}
+                placeholder="지급 관련 특이사항, 지급 조건, 확인 사항"/>
+            </div>
+          </section>
 
-      {/* 3. 기타경비 기성 */}
-      {budgetBanner('etc')}
-      <CategoryCard
-        icon="🧾" name="기타경비 기성" accent="bronze"
-        toggle={{ checked: includeEtc, onChange: setIncludeEtc, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorDetail={vendorDetailOf(etcVendorName)}
-        note={catNotes.etc} onNoteChange={setCatNote('etc')}
-        vendorValue={etcVendorName} onVendorChange={setEtcVendorName} vendorOptions={vendorOptions}
-        vendorPlaceholder="기타경비 지급 업체명" vendorLabel="기타경비"
-        onSaveVendor={() => handleSaveCategoryVendorName('etc', etcVendorName, '기타경비')}
-        savingVendor={savingVendorCat === 'etc'}
-        totalAmount={etcBudget}
-        onTotalChange={setEtcBudget}
-        totalNote={etcBudgetNum !== (baseBudgets.etc || 0) ? '(수정됨)' : '(계약관리 시트)'}
-        rounds={etcRounds}
-        manualRows={manualHist.etc} onManualRowsChange={setManualRows('etc')}
-        onSaveManual={() => handleSaveManual('etc')} savingManual={savingManualKind === 'etc'} manualSavedAt={histSavedAt.etc}
-        onDeleteRound={handleDeleteRound}
-        deletingNo={deletingRound}
-        currentAmount={docCategory === 'etc' ? docCatMeta.amount : etcRequestAmount}
-        onAmountChange={setEtcAmount}
-        currentRoundLabel={`${form.paymentCount}차`}
-        detailTitle="📄 기타 경비 내역"
-        detailActions={saveItemsButton('etc')}
-      >
-        <ItemsTable mode="simple" items={etcItems} setItems={setEtcItems} showReceipt/>
-      </CategoryCard>
+          <section>
+            <h3>계약 · 손익</h3>
+            <div className="xp-kv"><span>거래처</span><span style={{maxWidth:170, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{contract.client || '-'}</span></div>
+            <div className="xp-kv"><span>계약일</span><span>{contract.contractDate ? String(contract.contractDate).slice(0,10) : '-'}</span></div>
+            <div className="xp-kv"><span>총 계약금액</span><span>{Math.round(contractTotal).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv"><span>원가 배정 합계</span><span>{Math.round(costTotal).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv sum">
+              <span>예상 이익</span>
+              <span>{profit < 0 ? '-' + Math.round(-profit).toLocaleString('ko-KR') : Math.round(profit).toLocaleString('ko-KR')}
+                {contractTotal > 0 && <span style={{color: profit < 0 ? 'var(--danger)' : 'var(--pos)', marginLeft:6, fontWeight:500}}>{(profit / contractTotal * 100).toFixed(1)}%</span>}
+              </span>
+            </div>
+          </section>
 
-      {/* 4. 영업수수료 기성 */}
-      {budgetBanner('commission')}
-      <CategoryCard
-        icon="💼" name="영업수수료 기성" accent="plum"
-        toggle={{ checked: includeCommission, onChange: setIncludeCommission, includeLabel:'이번 회차 포함', excludeLabel:'이번 회차 제외' }}
-        vendorDetail={vendorDetailOf(commissionVendorName)}
-        note={catNotes.commission} onNoteChange={setCatNote('commission')}
-        vendorValue={commissionVendorName} onVendorChange={setCommissionVendorName} vendorOptions={vendorOptions}
-        vendorPlaceholder="영업수수료 지급 대상" vendorLabel="영업수수료"
-        onSaveVendor={() => handleSaveCategoryVendorName('commission', commissionVendorName, '영업수수료')}
-        savingVendor={savingVendorCat === 'commission'}
-        totalAmount={commissionBudget}
-        onTotalChange={setCommissionBudget}
-        totalNote={commissionBudgetNum !== (baseBudgets.commission || 0) ? '(수정됨)' : '(계약관리 시트)'}
-        rounds={commissionRounds}
-        manualRows={manualHist.commission} onManualRowsChange={setManualRows('commission')}
-        onSaveManual={() => handleSaveManual('commission')} savingManual={savingManualKind === 'commission'} manualSavedAt={histSavedAt.commission}
-        onDeleteRound={handleDeleteRound}
-        deletingNo={deletingRound}
-        currentAmount={docCategory === 'commission' ? docCatMeta.amount : commissionRequestAmount}
-        onAmountChange={setCommissionAmount}
-        currentRoundLabel={`${form.paymentCount}차`}
-        detailTitle="📄 영업 수수료 내역"
-        detailActions={saveItemsButton('commission')}
-      >
-        <ItemsTable mode="simple" items={commissionItems} setItems={setCommissionItems} showReceipt/>
-      </CategoryCard>
-
-      {/* 금회 지급 총액 요약 — 카드 순서(제품대→설치비→기타경비→영업수수료)와 맞춤, 체크된 항목만 합산 */}
-      <div style={{padding:'14px 16px', background:'var(--warn-soft, #FDF6E7)', border:'1px solid #F0D9A0', borderRadius:10, marginTop:20}}>
-        <div style={{fontSize:12, fontWeight:700, color:'var(--bronze-800, #8f6d3a)', paddingBottom:6, marginBottom:6, borderBottom:'1px solid #E8CFA0'}}>
-          📊 금회 지급 총액 요약 (체크된 항목만 합산)
-        </div>
-        <div style={{display:'flex', justifyContent:'space-between', padding:'3px 0', fontSize:12.5, color: includeProduct ? 'inherit' : 'var(--ink-3)'}}>
-          <span>제품대{!includeProduct && ' (이번 회차 미포함)'}</span>
-          <b style={{fontVariantNumeric:'tabular-nums'}}>{Math.round(productRequestAmount).toLocaleString()}원</b>
-        </div>
-        <div style={{display:'flex', justifyContent:'space-between', padding:'3px 0', fontSize:12.5, color: includeInstall ? 'inherit' : 'var(--ink-3)'}}>
-          <span>설치비{!includeInstall && ' (이번 회차 미포함)'}</span>
-          <b style={{fontVariantNumeric:'tabular-nums'}}>{Math.round(requestAmount).toLocaleString()}원</b>
-        </div>
-        <div style={{display:'flex', justifyContent:'space-between', padding:'3px 0', fontSize:12.5, color: includeEtc ? 'inherit' : 'var(--ink-3)'}}>
-          <span>기타경비{!includeEtc && ' (이번 회차 미포함)'}</span>
-          <b style={{fontVariantNumeric:'tabular-nums'}}>{Math.round(etcRequestAmount).toLocaleString()}원</b>
-        </div>
-        <div style={{display:'flex', justifyContent:'space-between', padding:'3px 0', fontSize:12.5, color: includeCommission ? 'inherit' : 'var(--ink-3)'}}>
-          <span>영업수수료{!includeCommission && ' (이번 회차 미포함)'}</span>
-          <b style={{fontVariantNumeric:'tabular-nums'}}>{Math.round(commissionRequestAmount).toLocaleString()}원</b>
-        </div>
-        <div style={{display:'flex', justifyContent:'space-between', padding:'6px 0 3px', borderTop:'1px dashed #E8CFA0', marginTop:4, fontSize:13, fontWeight:700}}>
-          <span>금회 지급 총액</span>
-          <b style={{fontVariantNumeric:'tabular-nums'}}>{grandTotal.toLocaleString()}원</b>
-        </div>
+          <section>
+            <h3>수금 대비 지급</h3>
+            <div style={{position:'relative', height:8, borderRadius:4, background:'var(--bg-2)', overflow:'hidden', margin:'4px 0 6px'}}
+              title={`입금 ${Math.round(received).toLocaleString()}원 · 지급(이번 회차 포함) ${Math.round(afterAll).toLocaleString()}원`}>
+              <span style={{position:'absolute', left:0, top:0, bottom:0, width: (contractTotal > 0 ? Math.min(received / contractTotal * 100, 100) : 0) + '%', background:'rgba(46,100,70,.32)'}}/>
+              <span style={{position:'absolute', left:0, top:0, bottom:0, width: (contractTotal > 0 ? Math.min(afterAll / contractTotal * 100, 100) : 0) + '%', background:'var(--green-700)'}}/>
+            </div>
+            <div className="xp-legend" style={{fontSize:11, marginBottom:4}}>
+              <span><i style={{background:'rgba(46,100,70,.32)', width:10, height:6}}/>입금</span>
+              <span><i style={{background:'var(--green-700)', width:10, height:6}}/>지급 (이번 회차 포함)</span>
+            </div>
+            <div className="xp-kv"><span>발주처 입금 누계</span><span>{Math.round(received).toLocaleString('ko-KR')}{contractTotal > 0 && <span style={{color:'var(--ink-3)', marginLeft:4}}>({Math.round(received / contractTotal * 100)}%)</span>}</span></div>
+            <div className="xp-kv"><span>미수금</span><span>{Math.round(Math.max(contractTotal - received, 0)).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv"><span>지급 후 누적 지급</span><span>{Math.round(afterAll).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv sum">
+              <span>자금 여유</span>
+              <span style={{color: cushion < 0 ? 'var(--danger)' : 'var(--pos)'}}>{cushion < 0 ? '−' : '+'}{Math.round(Math.abs(cushion)).toLocaleString('ko-KR')}</span>
+            </div>
+          </section>
+        </aside>
       </div>
     </Modal>
     </>
