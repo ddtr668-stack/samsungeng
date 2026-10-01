@@ -71,7 +71,7 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
       const verDate = (String(ver).match(/\d{4}-\d{2}-\d{2}-\d{2}/) || [''])[0];
       const outdated = verDate && verDate < EXPECTED;
       setError(outdated
-        ? `Apps Script 웹앱이 예전 버전(${verDate})으로 배포되어 있습니다.\n편집기의 새 코드가 아직 웹앱에 반영되지 않았습니다.\n\n해결: Apps Script → 배포 → 배포 관리 → ✏️ 연필 → 버전 '새 버전' → 배포\n('새 배포'가 아니라 기존 배포를 수정해야 주소가 그대로 유지됩니다)`
+        ? `Apps Script 웹앱이 예전 버전(${verDate})으로 배포되어 있습니다.\n연결 서버: ${shortApiUrl(getApiUrl())}\n\n• 다른 스프레드시트의 Apps Script 로 만든 주소일 수 있습니다 — 계약관리(고유ID 열이 있는) 시트에서 확장 프로그램 → Apps Script 로 연 프로젝트의 배포 주소인지 확인\n• 맞다면: 배포 → 배포 관리 → ✏️ 연필 → 버전 '새 버전' → 배포\n('새 배포'가 아니라 기존 배포를 수정해야 주소가 그대로 유지됩니다)`
         : msg + '\n\n서버 배포 버전: ' + ver + '\n(정상: ' + EXPECTED + ')');
     } finally {
       setBusy(false);
@@ -137,6 +137,7 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
 
         {!showUrl && (
           <div style={{marginTop:10,fontSize:11.5,color:'var(--ink-4)',textAlign:'right'}}>
+            <span title={getApiUrl()}>연결 서버 {shortApiUrl(getApiUrl())}{getApiUrl() !== getConfigApiUrl() ? ' (이 브라우저 전용)' : ''} · </span>
             <a href="#" onClick={e => { e.preventDefault(); setShowUrl(true); }} style={{color:'inherit'}}>서버 주소 변경</a>
           </div>
         )}

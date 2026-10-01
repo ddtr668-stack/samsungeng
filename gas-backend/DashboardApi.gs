@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-10-01-01 (지급이력 수기 추가)';
+var BUILD_VERSION_ = '2026-10-01-02 (연결 시트 이름 표시)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -93,7 +93,7 @@ function handleRequest_(e, method) {
       case 'updateUser':    return SG_apiUpdateUser_(payload, user);
       case 'deleteUser':    return SG_apiDeleteUser_(payload, user);
       case 'setManager':    return SG_apiSetManager_(payload);
-      case 'ping':          return jsonOut_({ ok:true, message:'pong', ts:new Date().toISOString(), version: BUILD_VERSION_ });
+      case 'ping':          return jsonOut_({ ok:true, message:'pong', ts:new Date().toISOString(), version: BUILD_VERSION_, sheetName: (function(){ try { return SpreadsheetApp.getActiveSpreadsheet().getName(); } catch (e) { return ''; } })() });
       case 'bootstrap':     return apiBootstrap_(user);
       case 'contracts':     return apiListContracts_(user);
       case 'contract':      return apiGetContract_(params.no || payload.no, user);

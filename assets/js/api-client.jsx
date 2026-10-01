@@ -34,6 +34,8 @@ const setApiUrl = (url) => {
   else localStorage.removeItem(API_URL_KEY);
 };
 const hasApiUrl = () => !!getApiUrl();
+// 화면 표시용 짧은 주소: …/s/AKfycbz0Lw…71MQ/exec → 'AKfycbz0Lw…ld71MQ'
+const shortApiUrl = (u) => { const m = String(u || '').match(/\/s\/([^/]+)\/exec/); return m ? (m[1].slice(0, 10) + '…' + m[1].slice(-6)) : String(u || ''); };
 
 // ─── 스프레드시트 정보 관리 (표시·바로가기용) ───
 const getSheetUrl = () => (localStorage.getItem(SHEET_URL_KEY) || DEFAULT_SHEET_URL).trim();
@@ -301,7 +303,7 @@ Object.assign(window, {
   loadInitialData,
   refreshData,
   getApiUrl,
-  getConfigApiUrl,
+  getConfigApiUrl, shortApiUrl,
   setApiUrl,
   getAuthToken,
   getAuthUser,
