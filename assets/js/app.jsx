@@ -126,7 +126,9 @@ const App = () => {
     return fresh;
   }, []);
 
+  const [navOpen, setNavOpen] = useState(false);   // 모바일: ☰ 로 여는 사이드바
   const nav = useCallback((screen) => {
+    setNavOpen(false);
     setRoute({ screen });
     setGlobalSearch('');
     window.scrollTo(0, 0);
@@ -211,11 +213,13 @@ const App = () => {
           </button>
         </div>
       )}
-      <div className="app">
+      <div className={'app' + (navOpen ? ' nav-open' : '')}>
         <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}
-          managers={managerStats} activeManager={activeManager} onPickManager={setViewManager}/>
+          managers={managerStats} activeManager={activeManager} onPickManager={(m) => { setNavOpen(false); setViewManager(m); }}/>
+        <div className="side-backdrop" onClick={() => setNavOpen(false)}/>
         <main>
           <Topbar
+            onMenu={() => setNavOpen(o => !o)}
             crumbs={crumbs}
             searchValue={globalSearch}
             onSearch={handleGlobalSearch}
