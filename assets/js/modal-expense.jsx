@@ -716,6 +716,14 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const handleAddManual = (cat) => async ({ roundNo, docDate, amount, note }) => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); throw new Error('no api'); }
     const label = { install:'설치비', product:'제품대', etc:'기타경비', commission:'영업수수료' }[cat];
+    // 구버전 Apps Script 는 수기 표시를 모르고 같은 회차 기록을 덮어쓸 수 있으므로 버전 확인 후 저장
+    const MIN_VER = '2026-10-01-01';
+    let ver = '';
+    try { ver = String((await apiClient.ping())?.version || ''); } catch (e) { ver = ''; }
+    if (ver.slice(0, MIN_VER.length) < MIN_VER) {
+      toast?.(`⚠️ Apps Script 재배포가 필요합니다 (현재 ${ver ? ver.split(' ')[0] : '버전 정보 없음'} · 필요 ${MIN_VER}). gas-copy.html 에서 DashboardApi.gs 를 복사해 교체 후 "배포 관리 → 새 버전"으로 배포하세요.`, 'error');
+      throw new Error('outdated server');
+    }
     const vendor = cat === 'install' ? (form.subName || contract.subcontractor || '')
       : ({ product: productVendorName, etc: etcVendorName, commission: commissionVendorName }[cat] || '');
     try {
