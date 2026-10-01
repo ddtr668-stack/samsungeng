@@ -451,6 +451,7 @@ const CategoryCard = ({
   vendorDetail,     // { ceo, bizNo, bank, account, holder } — 업체명 아래 한 줄로 표시
   note, onNoteChange, // 항목별 비고(지급 사유) — 출력물 지급대상 비고·상세내역에 표시
   totalAmount, rounds, currentAmount, onAmountChange, currentRoundLabel, onDeleteRound, deletingNo,
+  onAddManual,      // (entry:{roundNo, docDate, amount, note}) => Promise — 과거 지급이력 수기 추가
   onTotalChange, totalNote,   // 총액을 화면에서 고칠 수 있게 할 때 (예: 기타경비 — 계약관리 시트 값 불러와 수정)
   defaultTab = 'summary',
   detailTitle, detailActions, detailBanner,
@@ -459,6 +460,23 @@ const CategoryCard = ({
   const a = ACCENT_THEME[accent] || ACCENT_THEME.green;
   const [tab, setTab] = React.useState(defaultTab);
   const included = !toggle || toggle.checked;
+  const [manualOpen, setManualOpen] = React.useState(false);
+  const [manualSaving, setManualSaving] = React.useState(false);
+  const [manual, setManual] = React.useState({ roundNo: '', docDate: '', amount: '', note: '' });
+  const openManual = () => {
+    const maxRound = (rounds || []).reduce((m, r) => Math.max(m, Number(r.roundNo) || 0), 0);
+    setManual({ roundNo: String(maxRound + 1), docDate: new Date().toISOString().slice(0, 10), amount: '', note: '' });
+    setManualOpen(true);
+  };
+  const submitManual = async () => {
+    if (!(Number(manual.amount) > 0)) { alert('지급금액을 입력하세요'); return; }
+    setManualSaving(true);
+    try {
+      await onAddManual({ roundNo: Number(manual.roundNo) || 1, docDate: manual.docDate, amount: Number(manual.amount) || 0, note: manual.note });
+      setManualOpen(false);
+    } catch (e) { /* 알림은 호출한 쪽에서 */ }
+    finally { setManualSaving(false); }
+  };
 
   const total = Number(totalAmount) || 0;
   let prevCum = 0;
@@ -631,7 +649,7 @@ const CategoryCard = ({
               )}
               {rows.map(r => (
                 <div key={r.no || r.roundNo} style={{display:'grid', gridTemplateColumns:'1.4fr 0.9fr 0.7fr 0.9fr 0.4fr', gap:6, fontSize:11, padding:'4px 0', color:'var(--ink-3)', borderBottom:'1px dashed rgba(0,0,0,0.08)', alignItems:'center'}}>
-                  <span>{r.roundNo}차 · {_fmtDate(r.docDate)}</span>
+                  <span>{r.roundNo}차 · {_fmtDate(r.docDate)}{r.manual && <span title={r.note || '수기 입력'} style={{fontSize:8.5, background:'var(--ink-3)', color:'#fff', padding:'0 5px', borderRadius:8, marginLeft:4, fontWeight:700}}>수기</span>}</span>
                   <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{_fmtNum(r.amount)}원</span>
                   <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums'}}>{r.pct.toFixed(1)}%</span>
                   <span style={{textAlign:'right', fontVariantNumeric:'tabular-nums', color:'var(--ink-2)', fontWeight:700}}>{r.cumPct.toFixed(1)}%</span>
@@ -655,6 +673,30 @@ const CategoryCard = ({
                 </div>
               )}
             </div>
+            {onAddManual && (manualOpen ? (
+              <div style={{display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, marginTop:6, padding:'8px 10px', background:'#fff', border:`1px dashed ${a.mid}`, borderRadius:6, fontSize:11}}>
+                <b style={{color:a.strong}}>지급이력 수기 추가</b>
+                <input type="number" min="1" value={manual.roundNo} onChange={e => setManual(m => ({ ...m, roundNo: e.target.value }))} aria-label={`${name} 수기 회차`}
+                  style={{width:52, padding:'4px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5, textAlign:'right'}}/>차
+                <input type="date" value={manual.docDate} onChange={e => setManual(m => ({ ...m, docDate: e.target.value }))} aria-label={`${name} 수기 지급일`}
+                  style={{padding:'3px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5}}/>
+                <input type="number" placeholder="지급금액" value={manual.amount} onChange={e => setManual(m => ({ ...m, amount: e.target.value }))} aria-label={`${name} 수기 지급금액`}
+                  style={{width:120, padding:'4px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5, textAlign:'right', fontWeight:700}}/>
+                <input type="text" placeholder="메모 (예: 시스템 도입 전 지급)" value={manual.note} onChange={e => setManual(m => ({ ...m, note: e.target.value }))} aria-label={`${name} 수기 메모`}
+                  style={{flex:1, minWidth:140, padding:'4px 6px', border:'1px solid var(--line)', borderRadius:5, fontSize:11.5}}/>
+                <button type="button" onClick={submitManual} disabled={manualSaving}
+                  style={{padding:'4px 10px', fontSize:11, fontWeight:700, background:a.strong, color:'#fff', border:0, borderRadius:5, cursor: manualSaving ? 'wait' : 'pointer'}}>
+                  {manualSaving ? '저장 중…' : '추가'}
+                </button>
+                <button type="button" onClick={() => setManualOpen(false)} disabled={manualSaving}
+                  style={{padding:'4px 8px', fontSize:11, background:'#fff', color:'var(--ink-2)', border:'1px solid var(--line)', borderRadius:5, cursor:'pointer'}}>취소</button>
+              </div>
+            ) : (
+              <button type="button" onClick={openManual}
+                style={{marginTop:6, padding:'5px 12px', fontSize:11, fontWeight:600, background:'#fff', color:a.strong, border:`1px dashed ${a.mid}`, borderRadius:5, cursor:'pointer'}}>
+                + 지급이력 추가 (수기)
+              </button>
+            ))}
             {/* 진행바 */}
             <div style={{height:9, background:'#fff', border:`1px solid ${a.line}`, borderRadius:20, overflow:'hidden', position:'relative', margin:'10px 0 4px'}}>
               {prevBarPct > 0 && <div style={{position:'absolute', top:0, left:0, width:prevBarPct+'%', height:'100%', background:a.mid, borderRight:'1px solid #fff'}}/>}
@@ -721,7 +763,7 @@ const PreviousRoundDropdown = ({ history, selected, onSelect }) => {
         <option value="">▼ 이전 회차 선택 (신규 회차)</option>
         {rounds.map((r, idx) => (
           <option key={r.no || idx} value={r.no || idx}>
-            {r.roundNo}차 · {_fmtDate(r.docDate)} · {_fmtNum(r.amount)}원{r.note ? ` · ${r.note}` : ''}
+            {r.roundNo}차 · {_fmtDate(r.docDate)} · {_fmtNum(r.amount)}원{r.manual ? ' · (수기)' : ''}{r.note ? ` · ${r.note}` : ''}
           </option>
         ))}
       </select>

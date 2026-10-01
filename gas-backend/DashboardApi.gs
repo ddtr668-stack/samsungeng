@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-09-30-01 (계약 고유ID · 번호 중복 분리)';
+var BUILD_VERSION_ = '2026-10-01-01 (지급이력 수기 추가)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -1478,7 +1478,8 @@ function apiExpenseHistoryByContract_(contractNo) {
           productVendorName: detail.productVendorName || '', commissionVendorName: detail.commissionVendorName || '', etcVendorName: detail.etcVendorName || '',
           catNotes: detail.catNotes || {},
           productSummary: detail.productSummary || null,
-          snapshot: detail.snapshot || null
+          snapshot: detail.snapshot || null,
+          manual: !!detail.manual
         });
       }
     }
@@ -1501,7 +1502,8 @@ function apiSaveExpense_(payload) {
     var p = payload || {};
     var saved = appendExpenseLogEntry_(p);
     // 지출품의서에 입력한 설치비/제품대/영업수수료/기타경비를 계약 총액에도 반영
-    var sync = syncContractAmountsFromExpense_(Number(p.contractNo), p);
+    // (수기로 추가한 과거 지급이력은 계약 금액을 건드리지 않음)
+    var sync = p.manual ? { ok: true, updated: [] } : syncContractAmountsFromExpense_(Number(p.contractNo), p);
     return jsonOut_({ ok: true, entry: saved, contractSync: sync });
   } catch (err) {
     return errorOut_(err.message, 'SAVE_FAILED');
@@ -1607,6 +1609,8 @@ function appendExpenseLogEntry_(p) {
     // 항목별 비고(지급 사유) { product, install, etc, commission }
     catNotes: p.catNotes || {},
     productSummary: p.productSummary || null,
+    // 수기로 추가한 과거 지급이력 (지출품의서 없이 지급 기록만)
+    manual: !!p.manual,
     // 저장 당시 화면 상태 전체(입력칸·비고·토글·금액·업체명 등) — 회차를 다시 열면 그대로 복원
     snapshot: p.snapshot || null
   };
@@ -1631,13 +1635,15 @@ function appendExpenseLogEntry_(p) {
       var sameRound = Number(keys[k][extCol]) === roundNo;
       var isActive = String(keys[k][11]) === '정상';
       var sameSubcontractor = String(keys[k][4] || '').trim() === subcontractorName;
-      if (sameContract && sameRound && isActive && sameSubcontractor) {
+      var rowIsManual = /"manual":true/.test(String(keys[k][extCol + 2] || ''));
+      if (p.manual) break;                   // 수기 지급이력은 항상 새 줄
+      if (sameContract && sameRound && isActive && sameSubcontractor && !rowIsManual) {
         targetRow = k + 2; docNo = keys[k][0]; break;
       }
     }
   }
   // 변경 저장: 화면에서 "이미 저장된 회차를 변경"으로 확인한 경우 그 행을 그대로 덮어씀
-  var replaceNo = Number(p.replaceNo) || 0;
+  var replaceNo = p.manual ? 0 : (Number(p.replaceNo) || 0);
   if (replaceNo >= 2 && replaceNo <= lastRow) {
     var rr = sheet.getRange(replaceNo, 1, 1, width).getValues()[0];
     if (Number(rr[extCol - 1]) === contractNo && String(rr[11]) === '정상' && rr[0]) {
