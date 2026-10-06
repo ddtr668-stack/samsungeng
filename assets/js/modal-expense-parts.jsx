@@ -740,7 +740,7 @@ window.CategoryCard = CategoryCard;
 // ═══════════════════════════════════════════════════════════════
 // 3-2. 항목 한 줄(Linear 스타일) — v3.17
 //   닫힌 상태: [포함 체크] ● 항목명 · 업체 · 두 톤 진행막대(지난 회차 진하게 / 이번 회차 연하게) · 기성률 · 금회 금액
-//   펼친 상태: 기성 6칸(배정액·전회 누계·금회·금회 누계·잔액·기성률) → 회차 이력(관리자 정정) →
+//   펼친 상태: 기성 6칸(금액·전회 누계·금회·금회 누계·잔액·기성률) → 회차 이력(관리자 정정) →
 //             업체·비고 → 내역서 → 지급이력 직접 입력(수기 표)
 //   CategoryCard 와 같은 props 를 받으므로 화면 동작(저장·삭제·수기 이력 등)은 그대로다.
 // ═══════════════════════════════════════════════════════════════
@@ -853,8 +853,8 @@ const CategoryRow = ({
           <span className="xr-name" style={{color: included ? undefined : 'var(--ink-4)'}}>{name}</span>
           <span className={'xr-vendor' + (included && !vendorTxt ? ' missing' : '')}>{vendorTxt || '업체 미지정'}</span>
           {!included && <span className="xr-tag">이번 회차 제외</span>}
-          {st.over && <span className="xr-tag warn">배정 초과</span>}
-          <span className="xr-prog" title={`지난 회차까지 ${_pctTxt(st.prevPct)} · 이번 회차 +${_pctTxt(st.finalPct - st.prevPct)} (배정액 ${_fmtNum(st.total)}원)`}>
+          {st.over && <span className="xr-tag warn">금액 초과</span>}
+          <span className="xr-prog" title={`지난 회차까지 ${_pctTxt(st.prevPct)} · 이번 회차 +${_pctTxt(st.finalPct - st.prevPct)} (금액 ${_fmtNum(st.total)}원)`}>
             <span className="xr-bar">
               <span style={{width: st.prevBarPct + '%', background:c}}/>
               <span style={{width: st.curBarPct + '%', background:light}}/>
@@ -874,9 +874,9 @@ const CategoryRow = ({
             {/* 기성 6칸 */}
             <div className="xr-kpi6">
               <div>
-                <span className="k">배정액{totalNote ? <span style={{marginLeft:4}}>{totalNote}</span> : null}</span>
+                <span className="k">금액{totalNote ? <span style={{marginLeft:4}}>{totalNote}</span> : null}</span>
                 {onTotalChange
-                  ? <input type="number" value={totalAmount === '' || totalAmount == null ? '' : totalAmount} onChange={e => onTotalChange(e.target.value)} aria-label={`${name} 배정액(총액)`}/>
+                  ? <input type="number" value={totalAmount === '' || totalAmount == null ? '' : totalAmount} onChange={e => onTotalChange(e.target.value)} aria-label={`${name} 금액(총액)`}/>
                   : <span className="v">{_fmtNum(st.total)}</span>}
               </div>
               <div><span className="k">전회 누계</span><span className="v">{_fmtNum(st.prevSum)}</span></div>
