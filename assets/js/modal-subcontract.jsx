@@ -264,17 +264,9 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     setGeneratingPdf(true);
     try {
-      const docsHtml = await window.buildExpenseDocsHtml(buildHtml());
-      const res = await apiClient.generateExpensePdfFromHtml({ contractNo: contract.no, html: docsHtml, fileName: fileBase() });
-      if (!res.pdf?.base64) throw new Error('PDF 생성 실패');
-      const bin = atob(res.pdf.base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = res.pdf.fileName || `${fileBase()}.pdf`; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      // [🖨️ 출력]과 같은 모양으로 브라우저에서 PDF 생성 (안 되면 Apps Script 변환)
+      const { blob } = await window.makePrintPdf(buildHtml(), { contractNo: contract.no, fileName: fileBase() });
+      window.downloadBlob(blob, `${fileBase()}.pdf`);
       toast?.('PDF 다운로드 완료', 'success');
       // 이 프로젝트의 Drive 폴더 › 계약서 에도 저장 (지출품의서 PDF 가 '지출품의서' 폴더로 가는 것과 같은 방식)
       if (window.hasDriveCredentials?.()) {
