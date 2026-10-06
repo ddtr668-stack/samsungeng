@@ -747,7 +747,7 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onOpenSubcontra
                 <Icon name="edit" size={14}/>수정
               </button>
               {onOpenSubcontract && (
-                <button className="btn-ghost" onClick={() => onOpenSubcontract(c)} title="설치도급계약서 작성·출력">
+                <button className="btn-ghost" onClick={() => onOpenSubcontract(c)} title="설치도급계약서 · 하자보증이행각서 작성·출력">
                   <Icon name="file" size={14}/>도급계약서
                 </button>
               )}

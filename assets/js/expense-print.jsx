@@ -750,6 +750,8 @@ function buildExpenseDocsHtml(html) {
             if (el.classList.contains('s') || el.classList.contains('d')) s.push(`height:${px2pt(cs.height)}pt`);
           }
           if (cs.whiteSpace === 'pre-wrap' || cs.whiteSpace === 'pre-line') s.push('white-space:pre-wrap');
+          // 일부러 넓힌 줄 간격(글자 크기의 1.8배 이상, 예: 각서 본문)만 옮김
+          if (cs.lineHeight && cs.lineHeight !== 'normal' && parseFloat(cs.lineHeight) >= parseFloat(cs.fontSize) * 1.8) s.push(`line-height:${px2pt(cs.lineHeight)}pt`);
           styles.set(el, s.join(';'));
         });
 
