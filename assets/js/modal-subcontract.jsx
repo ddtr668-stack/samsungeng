@@ -51,6 +51,10 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       payMethod: D.payMethod,
       reportItems: D.reportItems,
       warrantyYears: D.warrantyYears,
+      // 하자보증이행각서
+      warrantyRate: 10,
+      warrantyMethod: '이행각서',
+      pledgeDate: '',
       specials: D.specials,
       contractor: _loadContractor(),
       sub: m ? { address: m.address || '', name: m.name || '', bizNo: m.bizNo || '', ceo: m.ceo || '', tel: m.tel || '' }
@@ -61,6 +65,7 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
   const [f, setF] = useState(initial);
   const [installRows, setInstallRows] = useState([]);   // 저장된 설치 내역서
   const [savedAt, setSavedAt] = useState('');
+  const [doc, setDoc] = useState('contract');   // 'contract' 설치도급계약서 | 'warranty' 하자보증이행각서
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -113,18 +118,28 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
   const pctSum = (f.pays || []).reduce((s, p) => s + (Number(p.pct) || 0), 0);
   const payAmts = window.splitPayments(amount, f.pays);
   const subAmt = Math.round(Number(contract.subcontractAmount) || 0);
+  const wc = window.warrantyCalc({ ...f, amount });
   const alerts = [];
+  if (doc === 'warranty') {
+    if (!amount) alerts.push('계약금액이 비어 있습니다 (계약서 탭에서 입력).');
+    if (!f.endDate) alerts.push('준공일이 비어 있어 하자보증 시작일·마감일을 계산할 수 없습니다.');
+    if (!(Number(f.warrantyYears) > 0)) alerts.push('하자보수기간(년)이 비어 있습니다 (계약서 탭 14조).');
+    if (!String(f.sub.name || '').trim()) alerts.push('하도급인 상호가 비어 있습니다.');
+    else if (!String(f.sub.bizNo || '').trim()) alerts.push('하도급인 사업자번호가 비어 있습니다.');
+    if (!String(f.sub.address || '').trim()) alerts.push('하도급인 주소가 비어 있습니다.');
+  } else {
   if (!amount) alerts.push('계약금액이 비어 있습니다.');
   if (pctSum !== 100) alerts.push(`결제 비율 합계가 ${pctSum}% 입니다 (100% 가 되어야 합니다).`);
   if (rowsTotal > 0 && amount && rowsTotal !== amount) alerts.push(`세부내역 합계 ${won(rowsTotal)}원과 계약금액 ${won(amount)}원이 다릅니다.`);
   if (!String(f.sub.name || '').trim()) alerts.push('하도급인 상호가 비어 있습니다.');
   else if (!String(f.sub.bizNo || '').trim()) alerts.push('하도급인 사업자번호가 비어 있습니다 (도급업체 관리에 등록하면 자동으로 채워집니다).');
   if (!f.startDate || !f.endDate) alerts.push('공사기간(착공일·준공일)이 비어 있습니다.');
+  }
 
-  const buildHtml = () => window.buildSubcontractHtml({ ...f, amount });
+  const buildHtml = () => (doc === 'warranty' ? window.buildWarrantyHtml : window.buildSubcontractHtml)({ ...f, amount });
   const fileBase = () => {
     const safe = (v) => String(v || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-    return `설치도급계약서_${safe(f.siteName) || contract.no}_${safe(f.sub.name) || '하도급인'}`;
+    return `${doc === 'warranty' ? '하자보증이행각서' : '설치도급계약서'}_${safe(f.siteName) || contract.no}_${safe(f.sub.name) || '하도급인'}`;
   };
 
   // ─── 저장 · 출력 ───
@@ -135,7 +150,7 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       try { localStorage.setItem(SUBC_CONTRACTOR_KEY, JSON.stringify(f.contractor)); } catch {}
       const r = await apiClient.saveContractItems(contract.no, 'subcontract', { terms: { ...f, amount: String(amount) } });
       setSavedAt(r.savedAt || '');
-      toast?.('도급계약 조건을 저장했습니다 — 다음에 열면 그대로 불러옵니다', 'success');
+      toast?.('도급계약서·하자보증각서 조건을 저장했습니다 — 다음에 열면 그대로 불러옵니다', 'success');
     } catch (e) {
       const msg = errMsg(e);
       if (/알 수 없는 내역 구분|BAD_PARAM/.test(msg)) toast?.('⚠️ Apps Script 재배포가 필요합니다 (도급계약서 저장 기능 없음). 출력·PDF 는 그대로 쓸 수 있습니다.', 'error');
@@ -199,7 +214,7 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       open={open}
       onClose={onClose}
       width="wide"
-      title="설치도급계약서"
+      title="도급계약서 · 하자보증각서"
       subtitle={`계약 ${typeof contractCode === 'function' ? contractCode(contract) : contract.no} · ${contract.projectName || ''}`}
       footer={
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', width:'100%', gap:8, flexWrap:'wrap'}}>
@@ -218,6 +233,56 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
     >
       <div className="xp-layout">
         <div style={{minWidth:0, display:'flex', flexDirection:'column', gap:22}}>
+          {/* 문서 선택 */}
+          <div role="tablist" aria-label="문서" style={{display:'flex', gap:4, padding:3, background:'var(--bg-2)', borderRadius:8, alignSelf:'flex-start'}}>
+            {[['contract', '설치도급계약서'], ['warranty', '하자보증이행각서']].map(([k, lb]) => (
+              <button key={k} type="button" role="tab" aria-selected={doc === k} onClick={() => setDoc(k)}
+                style={{height:32, padding:'0 14px', border:0, borderRadius:6, cursor:'pointer', font:'inherit', fontSize:13,
+                  fontWeight: doc === k ? 600 : 400, background: doc === k ? '#fff' : 'transparent', color: doc === k ? 'var(--ink-1)' : 'var(--ink-3)',
+                  boxShadow: doc === k ? '0 1px 2px rgba(0,0,0,.08)' : 'none'}}>{lb}</button>
+            ))}
+          </div>
+          {doc === 'warranty' && (<>
+          <section aria-label="하자보증금액">
+            <div className="xp-total">
+              <div>
+                <div className="cap">하자보증금액 (VAT 포함 · 계약금액의 {wc.rate}%)</div>
+                <div className="num">{won(wc.bond)}<small>원</small></div>
+              </div>
+              <div className="xp-meta">
+                <div>계약금액 {won(wc.amountVat)} (VAT 포함{f.vatMode === '포함' ? '' : ' · 별도 금액 × 1.1'})</div>
+                <div>보증기간 {wc.start || '-'} ~ {wc.end || '-'}</div>
+              </div>
+            </div>
+          </section>
+
+          {alerts.length > 0 && (
+            <div className="xp-alert" role="status" style={{marginTop:-8}}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{flex:'none', marginTop:2}}><path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3"/><path d="M8 11.3v.4"/></svg>
+              <div><b>출력 전 확인 {alerts.length}건</b><ul>{alerts.map((a, i) => <li key={i}>{a}</li>)}</ul></div>
+            </div>
+          )}
+
+          <section>
+            <div className="xp-list-head" style={{marginTop:0}}><h3>하자보증 내용</h3><span className="lg">공사명·계약금액·계약일·하도급인은 계약서 탭과 같은 값</span></div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(4, minmax(0, 1fr))', gap:10, paddingTop:12}}>
+              <SubcField id="sw-site" label="공사명" span={4}><input id="sw-site" style={inSt} value={f.siteName} onChange={e => set('siteName')(e.target.value)}/></SubcField>
+              <SubcField id="sw-cdate" label="계약일자"><input id="sw-cdate" type="date" style={inSt} value={f.contractDate} onChange={e => set('contractDate')(e.target.value)}/></SubcField>
+              <SubcField id="sw-end" label="준공일자"><input id="sw-end" type="date" style={inSt} value={f.endDate} onChange={e => set('endDate')(e.target.value)}/></SubcField>
+              <SubcField id="sw-years" label="하자보수기간 (년)"><input id="sw-years" type="number" min="0" style={inSt} value={f.warrantyYears} onChange={e => set('warrantyYears')(e.target.value)}/></SubcField>
+              <SubcField id="sw-rate" label="하자보증금율 (%)"><input id="sw-rate" type="number" min="0" step="0.1" style={inSt} value={f.warrantyRate} onChange={e => set('warrantyRate')(e.target.value)}/></SubcField>
+              <SubcField id="sw-start" label="하자보증 시작일 (준공일 다음 날)"><input id="sw-start" style={{...inSt, background:'var(--surface-2)'}} value={wc.start} readOnly/></SubcField>
+              <SubcField id="sw-endd" label="하자보증 마감일"><input id="sw-endd" style={{...inSt, background:'var(--surface-2)'}} value={wc.end} readOnly/></SubcField>
+              <SubcField id="sw-method" label="하자보수 이행방법" span={2}><input id="sw-method" style={inSt} value={f.warrantyMethod} onChange={e => set('warrantyMethod')(e.target.value)}/></SubcField>
+              <SubcField id="sw-pdate" label="각서 제출일 (비우면 준공일)"><input id="sw-pdate" type="date" style={inSt} value={f.pledgeDate} onChange={e => set('pledgeDate')(e.target.value)}/></SubcField>
+            </div>
+            <p style={{fontSize:12, color:'var(--ink-3)', margin:'10px 0 0', lineHeight:1.6}}>
+              각서 문구는 원본 그대로이며, 받는 사람은 도급인 상호(“{f.contractor.name || '도급인'} 귀하”)로 나옵니다. 하도급인 주소·상호·대표자·사업자번호는 오른쪽 칸에서 고칠 수 있습니다.
+            </p>
+          </section>
+          </>)}
+
+          {doc === 'contract' && (<>
           {/* 계약금액 */}
           <section aria-label="계약금액">
             <div className="xp-total">
@@ -325,6 +390,7 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
               <SubcField id="sc-spc" label="기타 특기사항 (한 줄에 하나)" span={2}><textarea id="sc-spc" rows={6} style={taSt} value={f.specials} onChange={e => set('specials')(e.target.value)}/></SubcField>
             </div>
           </section>
+          </>)}
         </div>
 
         {/* 오른쪽: 계약일 · 당사자 */}

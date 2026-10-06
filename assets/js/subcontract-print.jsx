@@ -209,3 +209,100 @@ function buildSubcontractHtml(d) {
 
 window.buildSubcontractHtml = buildSubcontractHtml;
 window.SUBCONTRACT_PRINT_CSS = SUBCONTRACT_PRINT_CSS;
+
+// ═══════════════════════════════════════════════════════════════
+// 하자보증이행각서 (A4 1장) — v3.21
+//   회사 원본 양식: 공사명 · 계약금액(VAT포함) · 계약일자/준공일자 · 하자보증금율 ·
+//   하자보증 시작일/마감일 · 하자보증금액(VAT포함) · 하자보수 이행방법 · 각서 문구 ·
+//   제출일 · 하도급인(주소·상호·대표자·사업자번호) · "○○ 귀하"
+//   원본에서 엑셀 수식이 깨져 나오던 칸(계약일자 1900년, 보증금액 -)은 여기서 계산
+// ═══════════════════════════════════════════════════════════════
+const _kDate = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? `${m[1]}년 ${Number(m[2])}월 ${Number(m[3])}일` : '';
+};
+const _addDays = (iso, n) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+  return d.toISOString().slice(0, 10);
+};
+const _addYears = (iso, y) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  const d = new Date(Date.UTC(+m[1] + Number(y || 0), +m[2] - 1, +m[3]));
+  return d.toISOString().slice(0, 10);
+};
+// 보증기간: 준공일 다음 날부터 N년 (마감일 = 시작일 + N년 − 1일) · 금액은 VAT포함 기준
+function warrantyCalc(d) {
+  const years = Number(d.warrantyYears) || 0;
+  const start = d.endDate ? _addDays(d.endDate, 1) : '';
+  const end = start && years ? _addDays(_addYears(start, years), -1) : '';
+  const amount = Math.round(Number(d.amount) || 0);
+  const amountVat = d.vatMode === '포함' ? amount : Math.round(amount * 1.1);
+  const rate = Number(d.warrantyRate);
+  const bond = Math.round(amountVat * (isNaN(rate) ? 0 : rate) / 100);
+  return { start, end, amountVat, rate: isNaN(rate) ? 0 : rate, bond };
+}
+window.warrantyCalc = warrantyCalc;
+
+const WARRANTY_PRINT_CSS = `
+@page { size: A4 portrait; margin: 18mm 18mm 18mm 18mm; }
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html, body { margin: 0; padding: 0; background: #fff; }
+body { font-family: 'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans CJK KR','Noto Sans KR',sans-serif; font-size: 11pt; color: #000; }
+@media screen { body { width: 210mm; padding: 18mm; } }
+table { width: 100%; border-collapse: collapse; }
+table.w { border: 1pt solid #000; table-layout: fixed; }
+table.w td { border-bottom: 0.6pt solid #000; padding: 2.4mm 3mm; vertical-align: middle; }
+table.w td.k { text-align: center; letter-spacing: 0.3em; white-space: nowrap; border-right: 0.6pt solid #000; width: 32mm; }
+table.w td.k2 { text-align: center; letter-spacing: 0.15em; white-space: nowrap; border-right: 0.6pt solid #000; border-left: 0.6pt solid #000; width: 32mm; }
+table.w td.v { text-align: center; }
+table.w td.r { text-align: right; font-variant-numeric: tabular-nums; }
+table.w td.L { border-left: 1pt solid #000; } table.w td.R { border-right: 1pt solid #000; } table.w td.T { border-top: 1pt solid #000; } table.w td.B { border-bottom: 1pt solid #000 !important; }
+table.w td.title { text-align: center; font-size: 20pt; font-weight: 800; letter-spacing: 0.55em; padding: 6mm 0 6mm 0.55em; }
+table.w td.vat { text-align: left; width: 26mm; white-space: nowrap; padding-left: 1mm; }
+table.w td.pledge { border-bottom: 0; padding: 8mm 8mm 2mm; line-height: 2.5; text-align: justify; }
+table.w td.pdate { border-bottom: 0; text-align: center; padding: 0 0 12mm; }
+table.w td.who { border-bottom: 0; padding: 0 0 6mm; }
+table.who td { border: 0; padding: 2mm 0; font-size: 11pt; }
+table.who td.wk { width: 70mm; text-align: right; letter-spacing: 0.4em; padding-right: 6mm; }
+table.who td.wv { text-align: left; }
+table.who .seal { color: #555; font-size: 9pt; margin-left: 10mm; }
+table.w td.to { border-bottom: 0; font-size: 14pt; font-weight: 800; padding: 6mm 3mm 10mm; }
+`;
+
+function buildWarrantyHtml(d) {
+  d = d || {};
+  const s = d.sub || {};
+  const c = d.contractor || {};
+  const w = warrantyCalc(d);
+  const pledgeDate = d.pledgeDate || d.endDate || '';
+  const body = `
+  <table class="w">
+    <colgroup><col style="width:32mm"><col><col style="width:32mm"><col></colgroup>
+    <tr><td class="title L R T" colspan="4">하자보증이행각서</td></tr>
+    <tr><td class="k L">공사명</td><td class="v R" colspan="3">${_sEsc(d.siteName)}</td></tr>
+    <tr><td class="k L">계약금액</td><td class="r R" colspan="3">${_sNum(w.amountVat)}&nbsp;&nbsp;&nbsp;&nbsp;VAT포함</td></tr>
+    <tr><td class="k L">계약일자</td><td class="v">${_kDate(d.contractDate)}</td><td class="k2">준공일자</td><td class="v R">${_kDate(d.endDate)}</td></tr>
+    <tr><td class="k L" style="letter-spacing:0.05em">하자보증금율</td><td class="v R" colspan="3">${_sEsc(w.rate)}%</td></tr>
+    <tr><td class="k L" style="letter-spacing:0.02em">하자보증시작일</td><td class="v">${_kDate(w.start)}</td><td class="k2" style="letter-spacing:0.02em">하자보증마감일</td><td class="v R">${_kDate(w.end)}</td></tr>
+    <tr><td class="k L" style="letter-spacing:0.05em">하자보증금액</td><td class="r R" colspan="3">${_sNum(w.bond)}&nbsp;&nbsp;&nbsp;&nbsp;VAT포함</td></tr>
+    <tr><td class="k L" style="letter-spacing:0.1em;line-height:1.3">하 자 보 수<br>이 행 방 법</td><td class="R" colspan="3">${_sEsc(d.warrantyMethod || '이행각서')}</td></tr>
+    <tr><td class="pledge L R" colspan="4">&nbsp;&nbsp;본인은 귀사에서 시행하는 위의 공사에 대한 하자보수를 이행함에 있어 공사계약일반조건에 따라 면제 받은 바, 하자책임기간내에 하자가 발견될 시에는 즉시 실액변상 또는 재시공할 것을 확약하며, 이를 이행치 않을 경우 귀사의 어떠한 조치에도 이의를 제기하지 않겠기에 각서를 제출합니다.</td></tr>
+    <tr><td class="pdate L R" colspan="4">${_kDate(pledgeDate)}</td></tr>
+    <tr><td class="who L R" colspan="4">
+      <table class="who">
+        <tr><td class="wk">주소 :</td><td class="wv">${_sEsc(s.address)}</td></tr>
+        <tr><td class="wk">상호 :</td><td class="wv"><b>${_sEsc(s.name)}</b></td></tr>
+        <tr><td class="wk">대표자 :</td><td class="wv">${_sEsc(s.ceo)}<span class="seal">(인)</span></td></tr>
+        <tr><td class="wk" style="letter-spacing:0.05em">사업자번호 :</td><td class="wv">${_sEsc(s.bizNo)}</td></tr>
+      </table>
+    </td></tr>
+    <tr><td class="to L R B" colspan="4">${_sEsc(c.name || '')}&nbsp;&nbsp;귀하</td></tr>
+  </table>`;
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>하자보증이행각서_${_sEsc(d.siteName || '')}</title>
+<style>${WARRANTY_PRINT_CSS}</style></head><body>${body}</body></html>`;
+}
+window.buildWarrantyHtml = buildWarrantyHtml;
