@@ -64,6 +64,11 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
 
   const [f, setF] = useState(initial);
   const [installRows, setInstallRows] = useState([]);   // 저장된 설치 내역서
+  const installRecRef = useRef(null);                     // 저장된 설치 내역서 레코드 전체(수기 지급이력 history 보존용)
+  const [importing, setImporting] = useState(null);       // 'drive' | 'local' | 'template' | 'save'
+  const [itemsFile, setItemsFile] = useState({ name: '', url: '' });
+  const [itemsSavedAt, setItemsSavedAt] = useState('');
+  const confirmDialog = window.useConfirm ? window.useConfirm() : null;
   const [savedAt, setSavedAt] = useState('');
   const [doc, setDoc] = useState('contract');   // 'contract' 설치도급계약서 | 'warranty' 하자보증이행각서
   const [loading, setLoading] = useState(false);
@@ -87,10 +92,13 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       if (!alive) return;
       const items = r.items || {};
       const inst = items.install;
+      installRecRef.current = Array.isArray(inst) ? { items: inst } : (inst || null);
       const instRows = (Array.isArray(inst) ? inst : (inst && inst.items) || [])
         .filter(x => x && (x.name || Number(x.qty) || Number(x.unitPrice)))
-        .map(x => ({ name: x.name || '', spec: x.spec || '', qty: x.qty ?? '', unit: x.unit || '', unitPrice: x.unitPrice ?? '' }));
+        .map(x => ({ name: x.name || '', spec: x.spec || '', qty: x.qty ?? '', unit: x.unit || '', unitPrice: x.unitPrice ?? '', note: x.note || '' }));
       setInstallRows(instRows);
+      setItemsFile({ name: (inst && !Array.isArray(inst) && inst.filename) || '', url: '' });
+      setItemsSavedAt((r.savedAt || {}).install || '');
       const saved = items.subcontract && !Array.isArray(items.subcontract) ? items.subcontract : null;
       if (saved && saved.terms) {
         setF(x => ({ ...x, ...saved.terms, contractor: { ...x.contractor, ...(saved.terms.contractor || {}) }, sub: { ...x.sub, ...(saved.terms.sub || {}) } }));
@@ -141,6 +149,78 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
     const safe = (v) => String(v || '').replace(/[\\/:*?"<>|]/g, '_').trim();
     return `${doc === 'warranty' ? '하자보증이행각서' : '설치도급계약서'}_${safe(f.siteName) || contract.no}_${safe(f.sub.name) || '하도급인'}`;
   };
+
+  // ─── 세부내역 가져오기 · 저장 (지출품의서 설치비 내역서와 같은 방식 · 같은 저장 위치) ───
+  const toRows = (items) => (items || []).map(x => ({ name: x.name || '', spec: x.spec || '', qty: x.qty ?? '', unit: x.unit || '', unitPrice: x.unitPrice ?? '', note: x.note || '' }));
+  const pickScoped = async (title) => {
+    let folderId = null;
+    try {
+      if (window.hasDriveCredentials?.()) {
+        const { category } = await window.findOrCreateCategoryFolder(contract, 'install');
+        folderId = category?.id || null;
+      }
+    } catch (e) { /* 폴더를 못 찾으면 전체 Drive 에서 고름 */ }
+    return window.pickFromDrive({ folderId, title });
+  };
+  const importItems = async (mode) => {
+    setImporting(mode);
+    try {
+      const picked = mode === 'drive' ? await pickScoped(`설치 내역서 선택 — ${contract.projectName || ''}`) : await window.pickFromLocal();
+      if (!picked?.blob) throw new Error('파일을 가져오지 못했습니다');
+      const { firstSheet } = await window.xlsxToSheets(picked.blob);
+      const items = window.parseInstallXlsx(firstSheet);
+      if (!items.length) throw new Error('가져올 항목이 없습니다.');
+      set('rows')(toRows(items));
+      let url = mode === 'drive' ? (picked.url || '') : '';
+      if (mode === 'local' && window.hasDriveCredentials?.()) {
+        try { const { file } = await window.uploadFileToCategory(contract, 'install', picked.blob, picked.filename); url = file?.url || file?.webViewLink || ''; } catch (e) { console.warn('[도급계약서 PC→Drive]', e); }
+      }
+      setItemsFile({ name: picked.filename || '', url });
+      toast?.(`세부내역 ${items.length}건 가져옴${mode === 'local' && url ? ' · Drive에 자동 저장됨' : ''} — [💾 내역 저장]을 누르면 지출품의서 설치비 내역에도 반영됩니다`, 'success');
+    } catch (e) {
+      if (!/취소/.test(errMsg(e))) toast?.('가져오기 실패: ' + errMsg(e), 'error');
+    } finally { setImporting(null); }
+  };
+  const createTemplate = async () => {
+    if (!window.hasDriveCredentials?.()) { toast?.('Google Drive 인증 정보가 없어 새 양식 파일을 만들 수 없습니다. 설정 화면에서 등록해주세요.', 'error'); return; }
+    setImporting('template');
+    try {
+      const res = await fetch('assets/templates/install-template.xlsx');
+      if (!res.ok) throw new Error('기본 양식 파일을 불러오지 못했습니다.');
+      const blob = await res.blob();
+      const filename = `${contract.projectName || '프로젝트'} 설치비 내역서 (${new Date().toISOString().slice(0, 10)}).xlsx`;
+      const { file } = await window.uploadFileToCategory(contract, 'install', blob, filename);
+      const url = file?.url || file?.webViewLink || '';
+      setItemsFile({ name: filename, url });
+      toast?.('설치비 내역서 기본 양식을 Drive에 만들었습니다. 열어서 값을 채운 뒤 [📁 Drive]로 다시 불러오세요.', 'success');
+      if (url) window.open(url, '_blank');
+    } catch (e) {
+      toast?.('새 양식 파일 생성 실패: ' + errMsg(e), 'error');
+    } finally { setImporting(null); }
+  };
+  // 계약내역서(설치비)에 저장 → 지출품의서 설치비 내역서와 같은 자료 (수기 지급이력은 그대로 유지)
+  const saveItems = async () => {
+    if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    const rows = (f.rows || []).filter(r => r && (r.name || Number(r.qty) || Number(r.unitPrice)));
+    if (installRows.length) {
+      const msg = `이 계약에 저장된 설치비 내역서(${installRows.length}건)를 지금 세부내역(${rows.length}건)으로 바꿉니다.\n지출품의서 설치비 내역서에도 같이 반영됩니다. 저장할까요?`;
+      const ok = confirmDialog ? await confirmDialog(msg) : window.confirm(msg);
+      if (!ok) return;
+    }
+    setImporting('save');
+    try {
+      const base = installRecRef.current || { items: [] };
+      const payload = { ...base, items: rows.map(r => ({ name: r.name || '', spec: r.spec || '', qty: String(r.qty ?? ''), unit: r.unit || '', unitPrice: String(r.unitPrice ?? ''), note: r.note || '' })), filename: itemsFile.name || base.filename || '', history: base.history || [] };
+      const r = await apiClient.saveContractItems(contract.no, 'install', payload);
+      installRecRef.current = payload;
+      setInstallRows(toRows(payload.items));
+      setItemsSavedAt(r.savedAt || '');
+      toast?.(`설치비 내역 저장 완료 (${rows.length}건) — 지출품의서에서도 같은 내역이 불러와집니다`, 'success');
+    } catch (e) {
+      toast?.('내역 저장 실패: ' + errMsg(e), 'error');
+    } finally { setImporting(null); }
+  };
+  const btnSt = (bg, color, border) => ({ padding:'5px 10px', fontSize:11.5, fontWeight:600, background:bg, color, border:`1px solid ${border}`, borderRadius:5, cursor: importing ? 'wait' : 'pointer', whiteSpace:'nowrap' });
 
   // ─── 저장 · 출력 ───
   const handleSave = async () => {
@@ -331,12 +411,19 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
           {/* 세부내역 */}
           <section>
             <div className="xp-list-head" style={{marginTop:0}}>
-              <h3>세부내역</h3>
-              <span style={{display:'flex', gap:6}}>
-                {installRows.length > 0 && <button type="button" className="xr-btn" onClick={() => set('rows')(installRows.map(r => ({ ...r })))}>설치 내역서 불러오기 ({installRows.length}건)</button>}
-                <button type="button" className="xr-btn" onClick={() => set('rows')([...(f.rows || []), { name:'', spec:'', qty:'', unit:'대', unitPrice:'' }])}>+ 행 추가</button>
-              </span>
+              <h3>세부내역 <span style={{fontWeight:400, color:'var(--ink-3)'}}>· 지출품의서 설치비 내역서와 같은 자료</span></h3>
+              <span style={{fontSize:11.5, color:'var(--ink-3)'}}>{itemsSavedAt ? `마지막 저장 ${String(itemsSavedAt).slice(5, 16)}` : ''}</span>
             </div>
+            <div style={{display:'flex', gap:6, flexWrap:'wrap', padding:'10px 0 2px'}}>
+              <button type="button" onClick={saveItems} disabled={!!importing} title="계약에 설치비 내역으로 저장 — 지출품의서 설치비 내역서에도 반영" style={btnSt(importing === 'save' ? 'var(--surface-2)' : 'var(--green-800, #1f5c3a)', importing === 'save' ? 'var(--ink-3)' : '#fff', 'var(--green-800, #1f5c3a)')}>{importing === 'save' ? '⏳ 저장 중...' : '💾 내역 저장'}</button>
+              <button type="button" onClick={() => importItems('drive')} disabled={!!importing} style={btnSt('#f0f7fb', '#1a5490', '#c8dbe5')}>{importing === 'drive' ? '⏳...' : '📁 Drive'}</button>
+              <button type="button" onClick={() => importItems('local')} disabled={!!importing} style={btnSt('#fff', 'var(--ink-2)', 'var(--line)')}>{importing === 'local' ? '⏳...' : '💻 PC'}</button>
+              <button type="button" onClick={createTemplate} disabled={!!importing} title="Drive에 파일이 없을 때 — 기본 양식(빈 표)으로 새 파일을 만들어 Drive에 저장합니다" style={{...btnSt('#fff', 'var(--green-800)', '#C9DFD1'), borderStyle:'dashed'}}>{importing === 'template' ? '⏳...' : '🆕 새 양식 만들기'}</button>
+              {itemsFile.url && <button type="button" onClick={() => window.open(itemsFile.url, '_blank', 'noopener')} style={btnSt('#fff', '#1a5490', '#c8dbe5')}>🔗 파일 열기</button>}
+              {installRows.length > 0 && <button type="button" className="xr-btn" onClick={() => set('rows')(installRows.map(r => ({ ...r })))}>저장된 설치 내역서 불러오기 ({installRows.length}건)</button>}
+              <button type="button" className="xr-btn" onClick={() => set('rows')([...(f.rows || []), { name:'', spec:'', qty:'', unit:'대', unitPrice:'', note:'' }])}>+ 행 추가</button>
+            </div>
+            {itemsFile.name && <div style={{fontSize:11.5, color:'var(--ink-3)', padding:'2px 0 0'}}>📄 {itemsFile.name}</div>}
             <div className="xr-scroll"><div className="xr-scroll-in">
               <div style={{display:'grid', gridTemplateColumns:'minmax(0,2.2fr) minmax(0,1.2fr) 70px 56px 110px 120px 30px', gap:6, fontSize:11.5, color:'var(--ink-3)', padding:'10px 0 4px', borderBottom:'1px solid var(--line)'}}>
                 <span>품목</span><span>규격</span><span style={{textAlign:'right'}}>수량</span><span>단위</span><span style={{textAlign:'right'}}>단가</span><span style={{textAlign:'right'}}>금액</span><span/>
