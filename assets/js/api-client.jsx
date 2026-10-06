@@ -178,6 +178,8 @@ const api = {
   listClients: () => apiFetch('clients'),
   expenseHistory: () => apiFetch('expenseHistory'),
   generateExpensePdf: (row, payload) => apiFetch('expensePdf', { method:'POST', body:{ row, payload } }),
+  // 새 출력 양식 그대로 PDF — 브라우저가 만든 Google 문서용 HTML 을 서버가 A4 PDF 로 변환 (v3.18)
+  generateExpensePdfFromHtml: (payload) => apiFetch('expensePdfHtml', { method:'POST', body: payload }),
   // ─── 수금 누적 관리 ───
   listPayments: (contractNo) => apiFetch('payments', { params: { contractNo } }),
   createPayment: (payload) => apiFetch('createPayment', { method:'POST', body: payload }),

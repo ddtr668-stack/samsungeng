@@ -684,6 +684,186 @@ function buildExpensePrintHtml(d) {
 <style>${EXPENSE_PRINT_CSS}</style></head><body>${body}</body></html>`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// [📄 PDF 다운로드]용 — 새 출력 양식을 Google 문서 변환에 맞는 HTML로 바꾼다 (v3.18)
+//   Apps Script 는 HTML → Google 문서 → PDF 로 변환하는데, Google 문서는 <style> 의
+//   클래스 규칙·flex·절대위치를 거의 무시하고 표와 인라인 스타일만 제대로 읽는다.
+//   그래서 화면 인쇄용 양식(buildExpensePrintHtml)을 숨은 iframe 에 실제로 그려
+//   계산된 스타일(테두리·여백·배경·글자 크기·정렬)을 각 요소에 인라인으로 옮기고,
+//   flex 영역(머리말 결재란·맺음말)은 표로 바꾼다 → 양식 원본은 하나만 유지.
+// ═══════════════════════════════════════════════════════════════
+const _DOCS_CONTENT_MM = 186;   // A4 210mm − 좌우 여백 12mm × 2
+function buildExpenseDocsHtml(html) {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:1200px;border:0;visibility:hidden;';
+    const done = (fn, v) => { try { iframe.remove(); } catch (e) {} fn(v); };
+    iframe.onload = () => {
+      try {
+        const doc = iframe.contentDocument;
+        const win = iframe.contentWindow;
+        const body = doc.body;
+        body.style.padding = '0';
+        body.style.width = _DOCS_CONTENT_MM + 'mm';
+        const px2pt = (v) => Math.round(parseFloat(v) * 0.75 * 2) / 2;
+        const isZero = (v) => !v || parseFloat(v) === 0;
+        const transparent = (c) => !c || c === 'transparent' || /rgba\(\s*0,\s*0,\s*0,\s*0\s*\)/.test(c);
+        const CELL = { TD: 1, TH: 1 };
+        const BLOCK = { DIV: 1, H1: 1, H2: 1, H3: 1, P: 1, TABLE: 1, SECTION: 1 };
+
+        // 1) 계산된 스타일을 먼저 모두 읽어둔다 (구조를 바꾸기 전에)
+        const styles = new Map();
+        body.querySelectorAll('*').forEach(el => {
+          const tag = el.tagName;
+          if (tag === 'COL' || tag === 'COLGROUP' || tag === 'STYLE' || tag === 'BR') return;
+          const cs = win.getComputedStyle(el);
+          const s = [];
+          ['top', 'right', 'bottom', 'left'].forEach(side => {
+            const w = cs.getPropertyValue(`border-${side}-width`), st = cs.getPropertyValue(`border-${side}-style`);
+            if (!isZero(w) && st !== 'none') s.push(`border-${side}:${px2pt(w)}pt ${st} ${cs.getPropertyValue(`border-${side}-color`)}`);
+          });
+          if (CELL[tag] || BLOCK[tag] || tag === 'SPAN' || tag === 'B') {
+            ['top', 'right', 'bottom', 'left'].forEach(side => {
+              const v = cs.getPropertyValue(`padding-${side}`);
+              // 워드 문서는 줄 간격이 조금 넓어 1페이지가 넘치므로 칸 위아래 여백은 줄여서 옮긴다
+              const k = CELL[tag] && (side === 'top' || side === 'bottom') ? 0.55 : 1;
+              if (!isZero(v)) s.push(`padding-${side}:${Math.round(px2pt(v) * k * 2) / 2}pt`);
+            });
+          }
+          if (BLOCK[tag]) {
+            ['top', 'bottom'].forEach(side => {
+              const v = cs.getPropertyValue(`margin-${side}`);
+              if (!isZero(v)) s.push(`margin-${side}:${px2pt(v)}pt`);
+            });
+          }
+          if (!transparent(cs.backgroundColor)) s.push(`background-color:${cs.backgroundColor}`);
+          s.push(`color:${cs.color}`);
+          s.push(`font-size:${px2pt(cs.fontSize)}pt`);
+          if (Number(cs.fontWeight) >= 600) s.push('font-weight:bold');
+          if (cs.letterSpacing && cs.letterSpacing !== 'normal' && !isZero(cs.letterSpacing)) s.push(`letter-spacing:${px2pt(cs.letterSpacing)}pt`);
+          if ((CELL[tag] || BLOCK[tag]) && /center|right/.test(cs.textAlign)) s.push(`text-align:${cs.textAlign}`);
+          if (CELL[tag]) { s.push(`vertical-align:${cs.verticalAlign === 'top' ? 'top' : 'middle'}`); if (cs.whiteSpace === 'nowrap') s.push('white-space:nowrap'); }
+          if (tag === 'TABLE') s.push('border-collapse:collapse');
+          if (el.closest('table.sign') && CELL[tag]) {
+            s.push(`width:${px2pt(cs.width)}pt`);
+            if (el.classList.contains('s') || el.classList.contains('d')) s.push(`height:${px2pt(cs.height)}pt`);
+          }
+          if (cs.whiteSpace === 'pre-wrap' || cs.whiteSpace === 'pre-line') s.push('white-space:pre-wrap');
+          styles.set(el, s.join(';'));
+        });
+
+        // 칸 너비 — 브라우저가 실제로 그린 너비를 그대로 옮긴다 (워드 문서 변환은 colgroup·CSS 너비를 잘 안 지킴)
+        const cellW = new Map(), tableW = new Map();
+        body.querySelectorAll('table').forEach(t => {
+          const tw = t.getBoundingClientRect().width || 1;
+          tableW.set(t, tw);
+          t.querySelectorAll(':scope > tbody > tr > td, :scope > tbody > tr > th, :scope > thead > tr > th, :scope > thead > tr > td, :scope > tr > td, :scope > tr > th')
+            .forEach(c => cellW.set(c, { pct: c.getBoundingClientRect().width / tw * 100, px: c.getBoundingClientRect().width }));
+        });
+
+        // 2) 스타일을 인라인으로 적용
+        styles.forEach((s, el) => el.setAttribute('style', s));
+        body.querySelectorAll('table').forEach(t => {
+          const sign = t.classList.contains('sign');
+          const w = sign ? Math.round(tableW.get(t)) : null;
+          t.setAttribute('width', sign ? String(w) : '100%');
+          t.setAttribute('style', (t.getAttribute('style') || '') + (sign ? `;width:${px2pt(w)}pt` : ';width:100%'));
+          t.setAttribute('cellspacing', '0'); t.setAttribute('cellpadding', '0');
+        });
+        cellW.forEach((w, c) => {
+          const sign = !!c.closest('table.sign');
+          const v = sign ? String(Math.round(w.px)) : w.pct.toFixed(1) + '%';
+          c.setAttribute('width', v);
+          if (!sign) c.setAttribute('style', (c.getAttribute('style') || '') + `;width:${v}`);
+        });
+        body.querySelectorAll('colgroup').forEach(cg => cg.remove());
+
+        // 3) 구조 변환 — flex 영역을 표로
+        const toTable = (el, cells) => {
+          const t = doc.createElement('table');
+          t.setAttribute('width', '100%'); t.setAttribute('cellspacing', '0'); t.setAttribute('cellpadding', '0');
+          t.setAttribute('style', (el.getAttribute('style') || '').replace(/padding-[a-z]+:[^;]+;?/g, '') + ';width:100%;border-collapse:collapse');
+          const tr = doc.createElement('tr'); t.appendChild(tr);
+          const pad = (el.getAttribute('style') || '').match(/padding-bottom:[^;]+/);
+          cells.forEach(({ node, align, width }) => {
+            const td = doc.createElement('td');
+            td.setAttribute('style', `vertical-align:bottom;${align ? 'text-align:' + align + ';' : ''}${width ? 'width:' + width + ';' : ''}${pad ? pad[0] + ';' : ''}`);
+            if (align) td.setAttribute('align', align);
+            if (width) td.setAttribute('width', width);
+            if (node) td.appendChild(node);
+            tr.appendChild(td);
+          });
+          el.replaceWith(t);
+        };
+        const head = body.querySelector('.doc-head');
+        if (head) {
+          const title = head.querySelector('.doc-title'), sign = head.querySelector('table.sign');
+          if (title) title.setAttribute('style', (title.getAttribute('style') || '').replace(/border-bottom:[^;]+;?/, ''));
+          toTable(head, [{ node: title }, { node: sign, align: 'right', width: '40%' }]);
+        }
+        const closing = body.querySelector('.closing');
+        if (closing) toTable(closing, [{ node: closing.querySelector('.cl') }, { node: closing.querySelector('.cr'), align: 'right' }]);
+        // 테두리 있는 작은 상자(비고 칸·상세내역 제목)는 1칸 표로 — 워드 문서는 문단마다 테두리를 따로 그림
+        const boxToTable = (el) => {
+          const st = el.getAttribute('style') || '';
+          const t = doc.createElement('table');
+          t.setAttribute('width', '100%'); t.setAttribute('cellspacing', '0'); t.setAttribute('cellpadding', '0');
+          const m = st.match(/margin-(top|bottom):[^;]+/g) || [];
+          t.setAttribute('style', 'width:100%;border-collapse:collapse;' + m.join(';'));
+          const tr = doc.createElement('tr'); const td = doc.createElement('td');
+          td.setAttribute('width', '100%');
+          td.setAttribute('style', st.replace(/margin-(top|bottom):[^;]+;?/g, '') + ';width:100%');
+          while (el.firstChild) td.appendChild(el.firstChild);
+          tr.appendChild(td); t.appendChild(tr); el.replaceWith(t);
+        };
+        body.querySelectorAll('.note-box, .detail-title').forEach(boxToTable);
+        // 항목 구분선(sec-div 의 윗선)은 얇은 1칸 표로 따로
+        body.querySelectorAll('.sec-div').forEach(sec => {
+          const st = sec.getAttribute('style') || '';
+          const bt = (st.match(/border-top:[^;]+/) || [])[0];
+          sec.setAttribute('style', st.replace(/border-top:[^;]+;?/, '').replace(/padding-top:[^;]+;?/, ''));
+          if (bt) {
+            const t = doc.createElement('table');
+            t.setAttribute('width', '100%'); t.setAttribute('cellspacing', '0'); t.setAttribute('cellpadding', '0');
+            t.setAttribute('style', 'width:100%;border-collapse:collapse;margin-top:6pt');
+            t.innerHTML = `<tr><td width="100%" style="${bt};font-size:2pt;width:100%">&nbsp;</td></tr>`;
+            sec.parentNode.insertBefore(t, sec);
+          }
+        });
+        // 결재란 서명칸: 빈 칸은 높이가 줄어들므로 빈 줄을 넣어 둔다
+        body.querySelectorAll('table.sign td.s').forEach(td => { td.innerHTML = '&nbsp;<br>&nbsp;<br>&nbsp;'; });
+        // 기성률 막대(절대위치) 제거 · 범례 색 견본은 ■ 글자로
+        body.querySelectorAll('.cum-tbl .bar').forEach(b => b.remove());
+        body.querySelectorAll('.cum-legend i').forEach(i => {
+          const sp = doc.createElement('span');
+          sp.textContent = '■ ';
+          sp.setAttribute('style', `color:${win.getComputedStyle(i).backgroundColor};font-size:8pt`);
+          i.replaceWith(sp);
+        });
+        // 2페이지(상세내역) 앞 페이지 나눔
+        const detail = body.querySelector('.detail-page');
+        if (detail) {
+          const br = doc.createElement('p');
+          br.setAttribute('style', 'page-break-before:always;margin:0;font-size:1pt');
+          br.innerHTML = '&nbsp;';
+          detail.parentNode.insertBefore(br, detail);
+        }
+        // 클래스·스크립트 정리
+        body.querySelectorAll('[class]').forEach(el => el.removeAttribute('class'));
+        body.querySelectorAll('script,style').forEach(el => el.remove());
+
+        const title = doc.title || '지출품의서';
+        const out = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${_pEsc(title)}</title></head>`
+          + `<body style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:9pt;color:#000;margin:0">${body.innerHTML}</body></html>`;
+        done(resolve, out);
+      } catch (e) { done(reject, e); }
+    };
+    iframe.srcdoc = html;
+    document.body.appendChild(iframe);
+  });
+}
+
 // 숨은 iframe 에 문서를 넣고 인쇄 다이얼로그 오픈 (A4 세로는 문서 내 @page 로 지정됨)
 function printExpenseHtml(html) {
   return new Promise((resolve, reject) => {
@@ -753,6 +933,7 @@ const ExpensePrintPreview = ({ html, onPrint, onClose, printing }) => {
 
 window.classifyPayments = classifyPayments;
 window.buildExpensePrintHtml = buildExpensePrintHtml;
+window.buildExpenseDocsHtml = buildExpenseDocsHtml;
 window.printExpenseHtml = printExpenseHtml;
 window.ExpensePrintPreview = ExpensePrintPreview;
 window.EXPENSE_PRINT_CSS = EXPENSE_PRINT_CSS;
