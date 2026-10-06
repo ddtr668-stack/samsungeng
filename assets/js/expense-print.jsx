@@ -797,13 +797,13 @@ function buildExpenseDocsHtml(html) {
           el.replaceWith(t);
         };
         const head = body.querySelector('.doc-head');
-        if (head) {
+        if (head && head.querySelector('.doc-title')) {
           const title = head.querySelector('.doc-title'), sign = head.querySelector('table.sign');
           if (title) title.setAttribute('style', (title.getAttribute('style') || '').replace(/border-bottom:[^;]+;?/, ''));
           toTable(head, [{ node: title }, { node: sign, align: 'right', width: '40%' }]);
         }
         const closing = body.querySelector('.closing');
-        if (closing) toTable(closing, [{ node: closing.querySelector('.cl') }, { node: closing.querySelector('.cr'), align: 'right' }]);
+        if (closing && closing.querySelector('.cl') && closing.querySelector('.cr')) toTable(closing, [{ node: closing.querySelector('.cl') }, { node: closing.querySelector('.cr'), align: 'right' }]);
         // 테두리 있는 작은 상자(비고 칸·상세내역 제목)는 1칸 표로 — 워드 문서는 문단마다 테두리를 따로 그림
         const boxToTable = (el) => {
           const st = el.getAttribute('style') || '';

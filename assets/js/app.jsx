@@ -31,6 +31,7 @@ const App = () => {
   const [globalSearch, setGlobalSearch] = useState('');
   const [newContractOpen, setNewContractOpen] = useState(false);
   const [expenseContract, setExpenseContract] = useState(null);
+  const [subcontractContract, setSubcontractContract] = useState(null);   // 설치도급계약서
   const [bulkExpenseOpen, setBulkExpenseOpen] = useState(false);
   // 설정 변경 시 사이드바 등 리렌더용 카운터
   const [uiTick, setUiTick] = useState(0);
@@ -243,6 +244,7 @@ const App = () => {
               contractNo={route.contractNo}
               onBack={() => nav('contracts')}
               onOpenExpense={(c) => setExpenseContract(c)}
+              onOpenSubcontract={(c) => setSubcontractContract(c)}
               onUpdated={refresh}
               onSelectContract={selectContract}
             />
@@ -285,6 +287,15 @@ const App = () => {
           onClose={() => setExpenseContract(null)}
           data={data}
           onSaved={refresh}
+        />
+      )}
+      {subcontractContract && (
+        <SubcontractModal
+          key={'sc-' + (subcontractContract.id ?? subcontractContract.no)}
+          open={true}
+          contract={subcontractContract}
+          onClose={() => setSubcontractContract(null)}
+          data={data}
         />
       )}
     </ToastProvider>
