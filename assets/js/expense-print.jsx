@@ -249,7 +249,7 @@ function buildSummaryRow(n, title, total, curAmt, prevCum, included) {
         </tr>`;
 }
 
-// ── 항목별 기성 누계(1페이지) 한 행 — 배정액 · 전회 누계 · 금회 · 금회 누계 · 잔액 · 기성률 ──
+// ── 항목별 기성 누계(1페이지) 한 행 — 금액 · 전회 누계 · 금회 · 금회 누계 · 잔액 · 기성률 ──
 function buildCumRow(n, title, total, curAmt, prevCum, included) {
   total = Number(total) || 0;
   const cur = included ? (Number(curAmt) || 0) : 0;
@@ -602,7 +602,7 @@ function buildExpensePrintHtml(d) {
     <h2>□ 항목별 기성 누계<span class="cum-legend"><i style="background:#222"></i>전회 누계<i style="background:#9a9a9a"></i>금회 · 단위 원 · 상세 근거는 2페이지</span></h2>
     <table class="summary-tbl cum-tbl">
       <colgroup><col style="width:26mm"><col><col><col><col><col><col style="width:27mm"></colgroup>
-      <thead><tr><th>구분</th><th>배정액</th><th>전회 누계</th><th class="cur">금회</th><th>금회 누계</th><th>잔액</th><th>기성률</th></tr></thead>
+      <thead><tr><th>구분</th><th>금액</th><th>전회 누계</th><th class="cur">금회</th><th>금회 누계</th><th>잔액</th><th>기성률</th></tr></thead>
       <tbody>${summaryRowsHtml}${cumTotalRow}</tbody>
     </table>
   </div>

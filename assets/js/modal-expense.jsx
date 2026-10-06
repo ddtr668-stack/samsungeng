@@ -1117,7 +1117,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     const s = catStats[k.key];
     if (k.included && !String(k.vendor || '').trim()) alerts.push(`${k.name} 업체명이 지정되지 않았습니다.`);
     if (k.included && s.curAmt <= 0) alerts.push(`${k.name}이(가) 포함되어 있지만 금회 금액이 0원입니다.`);
-    if (s.over) alerts.push(`${k.name} 금회 누계가 배정액보다 ${won(s.finalCum - s.total)}원 많습니다.`);
+    if (s.over) alerts.push(`${k.name} 금회 누계가 금액보다 ${won(s.finalCum - s.total)}원 많습니다.`);
   });
   if (contractTotal > 0 && cushion < 0) alerts.push(`지급 후 누적 지급이 발주처 입금 누계보다 ${won(cushion)}원 많습니다.`);
 
@@ -1632,7 +1632,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
             <div className="xp-kv"><span>거래처</span><span style={{maxWidth:170, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{contract.client || '-'}</span></div>
             <div className="xp-kv"><span>계약일</span><span>{contract.contractDate ? String(contract.contractDate).slice(0,10) : '-'}</span></div>
             <div className="xp-kv"><span>총 계약금액</span><span>{Math.round(contractTotal).toLocaleString('ko-KR')}</span></div>
-            <div className="xp-kv"><span>원가 배정 합계</span><span>{Math.round(costTotal).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv"><span>(−) 제품대</span><span>{Math.round(productBudgetNum).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv"><span>(−) 설치비</span><span>{Math.round(installBudgetNum).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv"><span>(−) 기타경비</span><span>{Math.round(etcBudgetNum).toLocaleString('ko-KR')}</span></div>
+            <div className="xp-kv"><span>(−) 영업수수료</span><span>{Math.round(commissionBudgetNum).toLocaleString('ko-KR')}</span></div>
             <div className="xp-kv sum">
               <span>예상 이익</span>
               <span>{profit < 0 ? '-' + Math.round(-profit).toLocaleString('ko-KR') : Math.round(profit).toLocaleString('ko-KR')}
