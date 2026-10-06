@@ -88,12 +88,13 @@ table.pnl tr.pnl-sum th, table.pnl tr.pnl-sum td { font-size: 10.5pt; border-top
 .paytbl .due { color: #000; border-bottom: 1.2pt solid #000; }
 tr.cur td { font-weight: 700; }
 .note-box {
-  border: 0.6pt solid #000; padding: 1.8mm 3mm; min-height: 45mm; white-space: pre-wrap; word-break: keep-all;
+  border: 0.6pt solid #000; padding: 1.8mm 3mm; min-height: 12mm; white-space: pre-wrap; word-break: keep-all;
 }
 .empty { text-align: center; color: #666; padding: 3mm; }
-.closing { margin-top: 3.5mm; text-align: center; break-inside: avoid; page-break-inside: avoid; }
+.closing { margin-top: 2.5mm; display: flex; justify-content: space-between; align-items: flex-end; gap: 6mm; break-inside: avoid; page-break-inside: avoid; }
+.closing .cr { text-align: right; }
 .closing .line { font-size: 10.5pt; font-weight: 600; }
-.closing .date { font-size: 11pt; margin: 2.5mm 0 1.5mm; letter-spacing: 0.1em; }
+.closing .date { font-size: 11pt; margin: 1.5mm 0 1mm; letter-spacing: 0.1em; }
 .closing .co { font-size: 13pt; font-weight: 800; letter-spacing: 0.25em; }
 .closing .who { font-size: 10pt; margin-top: 1.2mm; }
 
@@ -126,6 +127,28 @@ tr.cur td { font-weight: 700; }
 .detail-title .t { font-size:14pt; font-weight:800; letter-spacing:0.15em; }
 .detail-title .s { font-size:9pt; color:#555; margin-top:1.5mm; }
 .detail-page { page-break-before: always; break-before: page; }
+
+/* ─── v3.17 · 결재란 · 자금 확인 · 항목별 기성 누계 ─── */
+.doc-head { display:flex; align-items:flex-end; justify-content:space-between; gap:6mm; border-bottom:2.25pt solid #000; padding-bottom:2mm; margin:0 0 2.5mm; }
+.doc-head .doc-title { border-bottom:0; padding:0 0 1mm 0.5em; margin:0; text-align:left; flex:1; }
+table.sign { width:auto; table-layout:fixed; }
+table.sign th, table.sign td { padding:0.6mm 1mm; text-align:center; font-size:8.5pt; }
+table.sign th.v { width:6mm; line-height:1.25; }
+table.sign th.h { width:19mm; }
+table.sign td.s { height:11mm; }
+table.sign td.d { height:4.5mm; color:#555; }
+table.fund { margin-top:1.6mm; }
+table.fund th { font-size:8.5pt; font-weight:600; background:#f6f6f6; }
+table.fund td { text-align:center; font-size:9.5pt; font-weight:700; font-variant-numeric:tabular-nums; }
+table.fund td .sub { font-size:8pt; font-weight:500; color:#444; margin-left:1mm; }
+table.fund td.hl { background:#efefef; }
+.cum-tbl td.cur, .cum-tbl th.cur { background:#f2f2f2; }
+.cum-tbl td.cur { font-weight:700; }
+.cum-tbl .bar { display:inline-block; width:11mm; height:1.6mm; background:#e2e2e2; vertical-align:middle; margin-right:1.5mm; position:relative; overflow:hidden; }
+.cum-tbl .bar i { position:absolute; top:0; bottom:0; }
+.cum-legend { font-size:8pt; color:#444; font-weight:500; margin-left:2mm; }
+.cum-legend i { display:inline-block; width:3.5mm; height:1.6mm; vertical-align:middle; margin:0 0.8mm 0 1.5mm; }
+.auto-note { margin:0 0 1mm; font-size:8.5pt; }
 `;
 
 
@@ -183,7 +206,7 @@ function buildRoundHistoryTable(rounds, curAmt, included, total, docDate, roundL
   const histRows = (rounds || []).map(r => {
     const amt = Number(r.amount) || 0;
     prevCum += amt;
-    return `<tr><td class="l">${_pEsc(r.roundNo)}차 · ${_pDate(r.docDate)}</td><td class="r">${_pNum(amt)}</td><td class="r">${_pPct(pctOf(amt))}</td><td class="r">${_pPct(pctOf(prevCum))}</td></tr>`;
+    return `<tr><td class="l">${_pEsc(r.roundNo)}차 · ${_pDate(r.docDate)}${r.manual ? ' (수기)' : ''}${r.corrected ? ' (정정)' : ''}</td><td class="r">${_pNum(amt)}</td><td class="r">${_pPct(pctOf(amt))}</td><td class="r">${_pPct(pctOf(prevCum))}</td></tr>`;
   }).join('');
 
   const cur = included ? (Number(curAmt) || 0) : 0;
@@ -223,6 +246,28 @@ function buildSummaryRow(n, title, total, curAmt, prevCum, included) {
           <td class="r big">${_pNum(cur)}원 <span class="pct">${curPctTxt}</span></td>
           <td class="r big">${_pNum(finalCum)}원 <span class="pct">(${_pPct(pctOf(finalCum))})</span></td>
           <td class="r big">${balanceTxt}</td>
+        </tr>`;
+}
+
+// ── 항목별 기성 누계(1페이지) 한 행 — 배정액 · 전회 누계 · 금회 · 금회 누계 · 잔액 · 기성률 ──
+function buildCumRow(n, title, total, curAmt, prevCum, included) {
+  total = Number(total) || 0;
+  const cur = included ? (Number(curAmt) || 0) : 0;
+  const finalCum = prevCum + cur;
+  const balance = total - finalCum;
+  const pctOf = (v) => total > 0 ? (v / total * 100) : 0;
+  const prevW = Math.min(pctOf(prevCum), 100);
+  const curW = Math.min(pctOf(cur), 100 - prevW);
+  const bar = total > 0
+    ? `<span class="bar"><i style="left:0;width:${prevW.toFixed(1)}%;background:#222"></i><i style="left:${prevW.toFixed(1)}%;width:${curW.toFixed(1)}%;background:#9a9a9a"></i></span>` : '';
+  return `<tr>
+          <td class="cat"><span class="num">${n}.</span>${_pEsc(title)}</td>
+          <td class="r">${_pNum(total)}</td>
+          <td class="r">${_pNum(prevCum)}</td>
+          <td class="r cur">${included ? _pNum(cur) : '제외'}</td>
+          <td class="r">${_pNum(finalCum)}</td>
+          <td class="r">${balance < 0 ? '초과 ' + _pNum(-balance) : (balance > 0 ? _pNum(balance) : '완납')}</td>
+          <td class="r">${bar}${total > 0 ? _pPct(pctOf(finalCum)) : '-'}</td>
         </tr>`;
 }
 
@@ -434,11 +479,55 @@ function buildExpensePrintHtml(d) {
   const catNo = {};
   ['product', 'install', 'etc', 'commission'].filter(k => showCat[k]).forEach((k, i) => { catNo[k] = i + 1; });
   const summaryRowsHtml = [
-    showCat.product    ? buildSummaryRow(catNo.product, '제품대', productTotalBudget, productCur, productPrevCum, includeProduct) : '',
-    showCat.install    ? buildSummaryRow(catNo.install, '설치비', installTotalBudget, req, installPrevCum, includeInstall) : '',
-    showCat.etc        ? buildSummaryRow(catNo.etc, '기타비용', etcTotalBudget, etcCur, etcPrevCum, includeEtc) : '',
-    showCat.commission ? buildSummaryRow(catNo.commission, '영업수수료', commissionTotalBudget, commissionCur, commissionPrevCum, includeCommission) : '',
+    showCat.product    ? buildCumRow(catNo.product, '제품대', productTotalBudget, productCur, productPrevCum, includeProduct) : '',
+    showCat.install    ? buildCumRow(catNo.install, '설치비', installTotalBudget, req, installPrevCum, includeInstall) : '',
+    showCat.etc        ? buildCumRow(catNo.etc, '기타비용', etcTotalBudget, etcCur, etcPrevCum, includeEtc) : '',
+    showCat.commission ? buildCumRow(catNo.commission, '영업수수료', commissionTotalBudget, commissionCur, commissionPrevCum, includeCommission) : '',
   ].join('');
+  // 합계 행 (표시된 항목만)
+  const _cumParts = [
+    showCat.product    && { t: productTotalBudget,    p: productPrevCum,    c: includeProduct ? productCur : 0 },
+    showCat.install    && { t: installTotalBudget,    p: installPrevCum,    c: includeInstall ? req : 0 },
+    showCat.etc        && { t: etcTotalBudget,        p: etcPrevCum,        c: includeEtc ? etcCur : 0 },
+    showCat.commission && { t: commissionTotalBudget, p: commissionPrevCum, c: includeCommission ? commissionCur : 0 },
+  ].filter(Boolean);
+  const cumT = _cumParts.reduce((s, x) => s + (Number(x.t) || 0), 0);
+  const cumP = _cumParts.reduce((s, x) => s + x.p, 0);
+  const cumC = _cumParts.reduce((s, x) => s + x.c, 0);
+  const cumF = cumP + cumC;
+  const cumTotalRow = _cumParts.length ? `<tr class="total">
+          <td class="cat">합계</td>
+          <td class="r">${_pNum(cumT)}</td><td class="r">${_pNum(cumP)}</td><td class="r cur">${_pNum(cumC)}</td>
+          <td class="r">${_pNum(cumF)}</td><td class="r">${cumT - cumF < 0 ? '초과 ' + _pNum(cumF - cumT) : _pNum(cumT - cumF)}</td>
+          <td class="r">${cumT > 0 ? _pPct(cumF / cumT * 100) : '-'}</td>
+        </tr>` : '';
+
+  // ── 자금 확인 : 발주처 입금 누계 · 미수금 · 지급 후 누적 지급(네 항목 전체) · 자금 여유 ──
+  const received = d.received !== undefined ? (Number(d.received) || 0) : (Number(c.paidAmount) || 0);
+  const contractSum = Number(c.totalAmount) || 0;
+  const paidAfterAll = productPrevCum + installPrevCum + etcPrevCum + commissionPrevCum
+    + (includeProduct ? productCur : 0) + (includeInstall ? req : 0) + (includeEtc ? etcCur : 0) + (includeCommission ? commissionCur : 0);
+  const cushion = received - paidAfterAll;
+  const fundTable = `<table class="fund">
+    <colgroup><col style="width:34mm"><col><col style="width:44mm"><col></colgroup>
+    <tr>
+      <th>지급 후 누적 지급</th><td>${_pNum(paidAfterAll)}<span class="sub">(네 항목 · 이번 회차 포함)</span></td>
+      <th>자금 여유 (수금 − 지급)</th><td class="hl">${cushion < 0 ? '−' : '+'}${_pNum(Math.abs(cushion))}<span class="sub">수금 ${_pNum(received)} 기준</span></td>
+    </tr>
+  </table>`;
+
+  // ── 비고 자동 문구 : 정정 반영 · 이번 회차 제외 항목 ──
+  const autoNotes = [];
+  (d.corrections || []).forEach(k => { if (k && k.text) autoNotes.push(`※ ${k.text}`); });
+  const _excl = [
+    !includeProduct && (productTotalBudget > 0 || productPrevCum > 0) && '제품대',
+    !includeInstall && (installTotalBudget > 0 || installPrevCum > 0) && '설치비',
+    !includeEtc && (etcTotalBudget > 0 || etcPrevCum > 0) && '기타비용',
+    !includeCommission && (commissionTotalBudget > 0 || commissionPrevCum > 0) && '영업수수료',
+  ].filter(Boolean);
+  if (_excl.length) autoNotes.push(`※ ${_excl.join('·')}는 이번 회차에서 제외`);
+  if (cushion < 0 && contractSum > 0) autoNotes.push(`※ 지급 후 누적 지급이 발주처 입금 누계보다 ${_pNum(-cushion)}원 많음`);
+  const autoNoteHtml = autoNotes.length ? `<div class="auto-note">${autoNotes.map(_pEsc).join('<br>')}</div>` : '';
 
   // ── 금회 요청금액(체크된 항목 합계) 안내 문구 (동일 순서) ──
   const noteParts = [];
@@ -454,7 +543,14 @@ function buildExpensePrintHtml(d) {
   const amountNote = `${noteParts.join(' + ') || '포함된 항목이 없습니다'}${excludedParts.length ? ` (${excludedParts.join('·')}은 이번 회차 미포함 · 별도 정산)` : ''}`;
 
   const body = `
-  <div class="doc-title">지 출 품 의 서</div>
+  <div class="doc-head">
+    <div class="doc-title">지 출 품 의 서</div>
+    <table class="sign">
+      <tr><th class="v" rowspan="3">결<br>재</th><th class="h">담당</th><th class="h">검토</th><th class="h">승인</th></tr>
+      <tr><td class="s"></td><td class="s"></td><td class="s"></td></tr>
+      <tr><td class="d">/</td><td class="d">/</td><td class="d">/</td></tr>
+    </table>
+  </div>
 
   <table class="subject">
     <tr><th>품의제목</th><td class="l">『${_pEsc(c.projectName || '(프로젝트명 없음)')}』 ${_pEsc(f.docSubject || '')}</td></tr>
@@ -487,6 +583,7 @@ function buildExpensePrintHtml(d) {
     </tr>
   </table>
   <div class="amount-note">${amountNote}</div>
+  ${fundTable}
 
   <div class="scope13">
   <div class="sec">
@@ -502,25 +599,29 @@ function buildExpensePrintHtml(d) {
   </div>
 
   <div class="sec">
-    <h2>□ 지급 내역 요약<small>구분별 총액 · 금회 지급액 · 누계 · 잔액 (상세 근거는 2페이지)</small></h2>
-    <table class="summary-tbl">
-      <colgroup><col style="width:34mm"><col><col><col><col></colgroup>
-      <thead><tr><th>구분</th><th>총액</th><th>지급액(금회)</th><th>누계</th><th>잔액</th></tr></thead>
-      <tbody>${summaryRowsHtml}</tbody>
+    <h2>□ 항목별 기성 누계<span class="cum-legend"><i style="background:#222"></i>전회 누계<i style="background:#9a9a9a"></i>금회 · 단위 원 · 상세 근거는 2페이지</span></h2>
+    <table class="summary-tbl cum-tbl">
+      <colgroup><col style="width:26mm"><col><col><col><col><col><col style="width:27mm"></colgroup>
+      <thead><tr><th>구분</th><th>배정액</th><th>전회 누계</th><th class="cur">금회</th><th>금회 누계</th><th>잔액</th><th>기성률</th></tr></thead>
+      <tbody>${summaryRowsHtml}${cumTotalRow}</tbody>
     </table>
   </div>
   </div>
 
   <div class="sec">
     <h2>□ 비고 사항</h2>
-    <div class="note-box">${f.note ? _pEsc(f.note) : ''}</div>
+    <div class="note-box">${autoNoteHtml}${f.note ? _pEsc(f.note) : ''}</div>
   </div>
 
   <div class="closing">
-    <div class="line">위와 같이 지출을 품의합니다.</div>
-    <div class="date">${_pEsc(dateKor)}</div>
-    <div class="co">${_pEsc(d.companyName || '주식회사 삼성이엔지')}</div>
-    <div class="who">영업담당 : ${_pEsc(f.manager || '')} &nbsp;&nbsp;&nbsp; (인)</div>
+    <div class="cl">
+      <div class="line">위와 같이 지출을 품의합니다.</div>
+      <div class="date">${_pEsc(dateKor)}</div>
+    </div>
+    <div class="cr">
+      <div class="co">${_pEsc(d.companyName || '주식회사 삼성이엔지')}</div>
+      <div class="who">영업담당 : ${_pEsc(f.manager || '')} &nbsp;&nbsp;&nbsp; (인)</div>
+    </div>
   </div>
 
   <div class="detail-page scope13">

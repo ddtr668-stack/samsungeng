@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-10-01-02 (연결 시트 이름 표시)';
+var BUILD_VERSION_ = '2026-10-01-03 (지출품의서 기성 정정)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -114,6 +114,7 @@ function handleRequest_(e, method) {
       case 'expenseByContract': return apiExpenseHistoryByContract_(params.contractNo || payload.contractNo);
       case 'saveExpense':   return apiSaveExpense_(payload);
       case 'cancelExpenseRound': return apiCancelExpenseRound_(payload);
+      case 'correctExpenseRound': return apiCorrectExpenseRound_(payload, user);
       // ─── 계약별 내역서(제품·설치·기타·수수료 품목) 저장·조회 ───
       case 'contractItems':      return apiGetContractItems_(params.contractNo || payload.contractNo);
       case 'saveContractItems':  return apiSaveContractItems_(payload, user);
@@ -1487,7 +1488,9 @@ function apiExpenseHistoryByContract_(contractNo) {
     return errorOut_('지출품의서 이력 조회 실패: ' + err.message, 'HISTORY_FAILED');
   }
   out.sort(function(a, b) { return a.roundNo - b.roundNo; });
-  return jsonOut_({ ok: true, history: out });
+  var corrections = [];
+  try { corrections = readCorrections_(contractNo); } catch (e) { corrections = []; }
+  return jsonOut_({ ok: true, history: out, corrections: corrections });
 }
 
 // 지출품의서 저장 (PDF 없이 이력만) · 저장 버튼 전용
@@ -1537,6 +1540,180 @@ function apiCancelExpenseRound_(payload) {
 
 var EXPENSE_EXT_FIRST_COL_ = 15;   // O열
 var EXPENSE_EXT_HEADERS_ = ['계약번호', '회차', '저장일시', '상세(JSON)'];
+
+// ============================================================
+// 지난 회차 정정 (관리자 전용) — v3.17
+//  - 품의서 회차: 지출품의서이력 시트의 그 줄에서 해당 항목 금액·작성일을 고치고
+//    상세 JSON 의 snapshot(화면 복원값)과 corrections 에도 반영
+//  - 수기 회차: 계약내역서 시트의 그 항목 history 에서 해당 줄을 고침
+//  - 어느 쪽이든 "기성정정이력" 시트에 변경 전/후 · 사유 · 수정자를 한 줄씩 남김
+// ============================================================
+var CORRECTION_SHEET_NAME_ = '기성정정이력';
+var CORRECTION_HEADERS_ = ['일시', '계약번호', '항목', '회차', '구분', '시트행', '변경 전 금액', '변경 후 금액', '변경 전 지급일', '변경 후 지급일', '사유', '수정자'];
+var CORRECTION_CATS_ = { product: '제품대', install: '설치비', etc: '기타경비', commission: '영업수수료' };
+
+function getCorrectionSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(CORRECTION_SHEET_NAME_);
+  if (!sh) {
+    sh = ss.insertSheet(CORRECTION_SHEET_NAME_);
+    sh.getRange(1, 1, 1, CORRECTION_HEADERS_.length).setValues([CORRECTION_HEADERS_]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function fmtYmd_(v) {
+  if (v instanceof Date || Object.prototype.toString.call(v) === '[object Date]') return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return String(v || '').slice(0, 10);
+}
+
+// 계약별 정정 이력 (최근 것이 먼저)
+function readCorrections_(contractNo) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CORRECTION_SHEET_NAME_);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var keyOf = {};
+  Object.keys(CORRECTION_CATS_).forEach(function (k) { keyOf[CORRECTION_CATS_[k]] = k; });
+  var out = [];
+  sh.getRange(2, 1, sh.getLastRow() - 1, CORRECTION_HEADERS_.length).getValues().forEach(function (r) {
+    if (Number(r[1]) !== Number(contractNo)) return;
+    var at = r[0] instanceof Date ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), 'MM.dd HH:mm') : String(r[0] || '');
+    out.push({
+      at: at, category: keyOf[String(r[2])] || String(r[2]), roundNo: Number(r[3]) || 0,
+      kind: String(r[4]) === '수기' ? 'manual' : 'doc', no: Number(r[5]) || null,
+      beforeAmount: Number(r[6]) || 0, afterAmount: Number(r[7]) || 0,
+      beforeDate: fmtYmd_(r[8]), afterDate: fmtYmd_(r[9]),
+      reason: String(r[10] || ''), by: String(r[11] || '')
+    });
+  });
+  return out.reverse();
+}
+
+// 지출품의서이력 한 줄에서 항목별 금액 (프런트 _roundBreakdown 과 같은 규칙)
+function expenseCategoryAmount_(r, detail, cat) {
+  var sum = function (items, key) {
+    return (items || []).reduce(function (s, it) {
+      return s + (key === 'amount' ? (Number(it.amount) || 0) : (Number(it.qty) || 0) * (Number(it.unitPrice) || 0));
+    }, 0);
+  };
+  var has = function (v) { return v !== undefined && v !== null && v !== ''; };
+  if (cat === 'install') return (detail.includeInstall === undefined || detail.includeInstall) ? (Number(r[5]) || 0) : 0;
+  if (cat === 'product') return !detail.includeProduct ? 0 : (has(detail.productAmount) ? Number(detail.productAmount) || 0 : sum(detail.productItems, 'qty'));
+  if (cat === 'etc') return !detail.includeEtc ? 0 : (has(detail.etcCost) ? Number(detail.etcCost) || 0 : sum(detail.expenseItems, 'amount'));
+  if (cat === 'commission') return !detail.includeCommission ? 0 : (has(detail.commission) ? Number(detail.commission) || 0 : sum(detail.commissionItems, 'amount'));
+  return 0;
+}
+
+// payload: { contractNo, category, kind:'doc'|'manual', no?, manualIndex?, roundNo, beforeAmount, beforeDate, amount, docDate, reason }
+function apiCorrectExpenseRound_(payload, user) {
+  var p = payload || {};
+  var contractNo = Number(p.contractNo);
+  var cat = String(p.category || '');
+  var kind = p.kind === 'manual' ? 'manual' : 'doc';
+  if (!contractNo || !CORRECTION_CATS_[cat]) return errorOut_('정정할 회차 정보가 올바르지 않습니다.', 'BAD_PARAM');
+  var reason = String(p.reason || '').trim();
+  if (!reason) return errorOut_('정정 사유를 입력해 주세요.', 'BAD_PARAM');
+  var amount = Math.round(Number(p.amount));
+  if (isNaN(amount) || amount < 0) return errorOut_('금액이 올바르지 않습니다.', 'BAD_PARAM');
+  var docDate = String(p.docDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(docDate)) return errorOut_('지급일이 올바르지 않습니다.', 'BAD_PARAM');
+  var who = (user && user.name) || '';
+  var now = new Date();
+  var beforeAmount = 0, beforeDate = '', sheetRow = '';
+  var stale = '그 사이 기록이 바뀌었습니다. 지출품의서 창을 닫았다가 다시 열어 주세요.';
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    if (kind === 'doc') {
+      var row = Number(p.no);
+      var sheet = getExpenseLogSheet_();
+      if (!row || row < 2 || row > sheet.getLastRow()) return errorOut_('해당 회차 기록을 찾을 수 없습니다.', 'NOT_FOUND');
+      var width = EXPENSE_EXT_FIRST_COL_ + EXPENSE_EXT_HEADERS_.length - 1;
+      var r = sheet.getRange(row, 1, 1, width).getValues()[0];
+      if (!r[0] || Number(r[EXPENSE_EXT_FIRST_COL_ - 1]) !== contractNo) return errorOut_('계약 번호가 일치하지 않아 정정할 수 없습니다.', 'MISMATCH');
+      if (String(r[11]) !== '정상') return errorOut_('삭제(취소)된 회차는 정정할 수 없습니다.', 'CANCELLED');
+      var detail = {};
+      try { detail = JSON.parse(r[EXPENSE_EXT_FIRST_COL_ + 2] || '{}') || {}; } catch (e) { detail = {}; }
+      beforeAmount = Math.round(expenseCategoryAmount_(r, detail, cat));
+      beforeDate = fmtYmd_(r[1]);
+      if (p.beforeAmount !== undefined && beforeAmount !== Math.round(Number(p.beforeAmount))) return errorOut_(stale, 'STALE');
+      var snap = detail.snapshot || null;
+      if (cat === 'install') {
+        var prev = Number(r[6]) || 0;
+        r[5] = amount; r[7] = prev + amount; r[9] = (Number(r[8]) || 0) - (prev + amount);
+        if (snap && snap.form) snap.form.requestAmount = amount;
+      } else if (cat === 'product') {
+        detail.productAmount = amount; if (snap) snap.productAmount = String(amount);
+      } else if (cat === 'etc') {
+        detail.etcCost = amount; if (snap) snap.etcAmount = String(amount);
+      } else {
+        detail.commission = amount; if (snap) snap.commissionAmount = String(amount);
+      }
+      if (docDate !== beforeDate) {
+        r[1] = docDate;
+        if (snap && snap.form) snap.form.docDate = docDate;
+      }
+      detail.corrections = (detail.corrections || []).concat([{
+        at: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'), by: who, category: cat,
+        beforeAmount: beforeAmount, afterAmount: amount, beforeDate: beforeDate, afterDate: docDate, reason: reason
+      }]);
+      var json = JSON.stringify(detail);
+      if (json.length > 49000) { detail.productItems = []; detail.productOmitted = true; json = JSON.stringify(detail); }
+      r[EXPENSE_EXT_FIRST_COL_ + 2] = json;
+      sheet.getRange(row, 1, 1, width).setValues([r]);
+      sheetRow = row;
+    } else {
+      var sh = getContractItemsSheet_();
+      var last = sh.getLastRow();
+      var target = 0, rec = null;
+      if (last >= 2) {
+        var vals = sh.getRange(2, 1, last - 1, 3).getValues();
+        for (var i = 0; i < vals.length; i++) {
+          if (Number(vals[i][0]) === contractNo && String(vals[i][1]) === cat) {
+            target = i + 2;
+            try { rec = JSON.parse(vals[i][2] || '[]'); } catch (e) { rec = null; }
+            break;
+          }
+        }
+      }
+      if (Array.isArray(rec)) rec = { items: rec };
+      var hist = (rec && rec.history) || [];
+      var bAmt = Math.round(Number(p.beforeAmount) || 0), bDate = String(p.beforeDate || '').slice(0, 10), rn = Number(p.roundNo) || 0;
+      var match = function (m) { return m && (Number(m.roundNo) || 0) === rn && Math.round(Number(m.amount) || 0) === bAmt && String(m.docDate || '').slice(0, 10) === bDate; };
+      var idx = -1;
+      var mi = Number(p.manualIndex);
+      if (!isNaN(mi) && match(hist[mi])) idx = mi;
+      if (idx < 0) for (var j = 0; j < hist.length; j++) { if (match(hist[j])) { idx = j; break; } }
+      if (!target || idx < 0) return errorOut_('저장된 수기 지급이력에서 이 줄을 찾지 못했습니다. [지급이력 저장]을 먼저 누른 뒤 다시 정정해 주세요.', 'NOT_FOUND');
+      beforeAmount = Math.round(Number(hist[idx].amount) || 0);
+      beforeDate = String(hist[idx].docDate || '').slice(0, 10);
+      hist[idx].amount = amount;
+      hist[idx].docDate = docDate;
+      rec.history = hist;
+      rec.corrections = (rec.corrections || []).concat([{
+        at: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'), by: who, roundNo: rn,
+        beforeAmount: beforeAmount, afterAmount: amount, beforeDate: beforeDate, afterDate: docDate, reason: reason
+      }]);
+      var recJson = JSON.stringify(rec);
+      if (recJson.length > 49000) return errorOut_('내역이 너무 길어 정정 기록을 저장할 수 없습니다.', 'TOO_LARGE');
+      sh.getRange(target, 3, 1, 3).setValues([[recJson, now, who]]);
+    }
+
+    getCorrectionSheet_().appendRow([
+      now, contractNo, CORRECTION_CATS_[cat], Number(p.roundNo) || 0, kind === 'manual' ? '수기' : '품의서', sheetRow,
+      beforeAmount, amount, beforeDate, docDate, reason, who
+    ]);
+  } finally {
+    lock.releaseLock();
+  }
+
+  var changes = [];
+  if (beforeAmount !== amount) changes.push({ label: CORRECTION_CATS_[cat] + ' ' + (Number(p.roundNo) || 0) + '차 금액', before: beforeAmount, after: amount });
+  if (beforeDate !== docDate) changes.push({ label: (Number(p.roundNo) || 0) + '차 지급일', before: beforeDate, after: docDate });
+  logChange_('기성 정정', '계약 ' + contractNo + ' · ' + reason, changes);
+  return jsonOut_({ ok: true, beforeAmount: beforeAmount, afterAmount: amount, beforeDate: beforeDate, afterDate: docDate });
+}
 
 function expenseLogName_() {
   return typeof EXPENSE_LOG_SHEET_NAME !== 'undefined' ? EXPENSE_LOG_SHEET_NAME : '지출품의서이력';
