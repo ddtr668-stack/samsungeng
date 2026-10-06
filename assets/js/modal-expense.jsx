@@ -1015,15 +1015,17 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 미리보기 모드 해제
   const exitPreview = () => setPreviewMode(false);
 
+  // [📄 PDF 다운로드] — 화면 [🖨️ 출력] 과 같은 새 양식을 Apps Script 가 A4 PDF 로 변환 (v3.18)
   const handlePdfDownload = async () => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
-    if (installItems.length === 0 || !installItems.some(r => r.name && r.qty)) {
-      toast?.('설치비 내역을 최소 1건 입력해주세요', 'error'); return;
-    }
+    if (!validatePrint()) return;
     setGeneratingPdf(true);
     try {
-      const payload = buildPayload();
-      const res = await apiClient.generateExpensePdf(contract._rowNumber || contract.no, payload);
+      const roundNo = Number(form.paymentCount) || 1;
+      const docsHtml = await window.buildExpenseDocsHtml(buildPrintHtml());
+      const safe = (v) => String(v || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+      const fileName = `지출품의서_${safe(contract.projectName) || contract.no}_${roundNo}차`;
+      const res = await apiClient.generateExpensePdfFromHtml({ contractNo: contract.no, html: docsHtml, fileName });
       if (!res.pdf?.base64) throw new Error('PDF 생성 실패');
       const bin = atob(res.pdf.base64);
       const bytes = new Uint8Array(bin.length);
@@ -1032,15 +1034,15 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = res.pdf.fileName || `지출품의서_${contract.no}_${form.paymentCount}차.pdf`;
+      a.download = res.pdf.fileName || `${fileName}.pdf`;
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       toast?.('PDF 다운로드 완료', 'success');
 
       // Drive 자동 업로드 (자격 증명 있을 때만)
       if (window.hasDriveCredentials?.()) {
         try {
-          await window.uploadExpensePdf(contract, payload.roundNo, payload.docDate, blob);
+          await window.uploadExpensePdf(contract, roundNo, form.docDate, blob);
           toast?.('Drive 지출품의서 폴더에도 저장됨', 'success');
         } catch (e) {
           console.warn('[PDF Drive 업로드]', e);
@@ -1049,15 +1051,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       }
     } catch (e) {
       const msg = errMsg(e);
-      // ExpenseRequest.gs 미설치 안내
-      if (/ExpenseRequest\.gs|MISSING_MODULE|generateExpenseRequestPdf/i.test(msg)) {
-        toast?.(
-          '⚠️ Apps Script 에 ExpenseRequest.gs 파일이 없습니다. 프로젝트 폴더의 gas-backend/ExpenseRequest.gs 를 새 스크립트 파일로 붙여넣기 후 "새 버전 배포" 해주세요.',
-          'error'
-        );
-        console.error('[PDF] ExpenseRequest.gs 필요:', msg);
-      } else if (/UNKNOWN_ROUTE|알 수 없는 라우트/i.test(msg)) {
-        toast?.('⚠️ Apps Script 재배포가 필요합니다. DashboardApi.gs 최신본 배포 확인.', 'error');
+      if (/UNKNOWN_ROUTE|알 수 없는 라우트/i.test(msg)) {
+        toast?.('⚠️ Apps Script 재배포가 필요합니다 (새 PDF 양식 기능 없음). DashboardApi.gs·Auth.gs 를 최신본으로 바꾼 뒤 "배포 관리 → 새 버전"으로 배포해 주세요. 그 전에는 [🖨️ 출력] → PDF로 저장을 사용하세요.', 'error');
+      } else if (/Drive API|서비스/.test(msg)) {
+        toast?.('⚠️ ' + msg, 'error');
       } else {
         toast?.('PDF 생성 실패: ' + msg, 'error');
       }

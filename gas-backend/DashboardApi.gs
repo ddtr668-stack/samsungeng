@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-10-01-03 (지출품의서 기성 정정)';
+var BUILD_VERSION_ = '2026-10-06-01 (지출품의서 PDF 새 양식)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -105,6 +105,7 @@ function handleRequest_(e, method) {
       case 'saveSubcontractor': return apiSaveSubcontractor_(payload);
       case 'expenseHistory':return apiExpenseHistory_();
       case 'expensePdf':    return apiGenerateExpensePdf_(payload);
+      case 'expensePdfHtml': return apiExpensePdfFromHtml_(payload);
       // ─── 신규: 수금 누적 관리 ───
       case 'payments':      return apiListPayments_(params.contractNo || payload.contractNo);
       case 'createPayment': return apiCreatePayment_(payload);
@@ -593,6 +594,55 @@ function apiExpenseHistory_() {
 // 지출품의서 PDF 생성 (base64 반환 → 브라우저에서 다운로드)
 // generateExpenseRequestPdfDownload() 는 ExpenseRequest.gs에 이미 정의됨
 // ============================================================
+
+// ============================================================
+// 지출품의서 PDF — 새 출력 양식 (v3.18)
+//  화면의 [🖨️ 출력] 양식을 브라우저가 Google 문서용 HTML(표·인라인 스타일)로 바꿔 보내면
+//  여기서 Google 문서로 변환 → A4 세로·여백 12mm → PDF(base64)로 돌려준다.
+//  변환용 임시 문서는 바로 휴지통으로. (예전 서버 양식 expensePdf 경로는 그대로 둠)
+// payload: { contractNo, html, fileName }
+// ============================================================
+function apiExpensePdfFromHtml_(payload) {
+  var p = payload || {};
+  var html = String(p.html || '');
+  if (!html || html.indexOf('<') < 0) return errorOut_('출력할 내용이 없습니다.', 'BAD_PARAM');
+  if (html.length > 3000000) return errorOut_('출력 내용이 너무 큽니다.', 'TOO_LARGE');
+  var name = String(p.fileName || '지출품의서').replace(/[\\\/:*?"<>|]/g, '_').slice(0, 120);
+  var docId = '';
+  try {
+    docId = convertHtmlToGoogleDoc_(Utilities.newBlob(html, 'text/html', name + '.html'), '[임시PDF] ' + name);
+    setDocA4Portrait_(docId);
+    var pdf = DriveApp.getFileById(docId).getAs('application/pdf');
+    return jsonOut_({ ok: true, pdf: { base64: Utilities.base64Encode(pdf.getBytes()), fileName: name + '.pdf' } });
+  } catch (err) {
+    return errorOut_('PDF 변환 실패: ' + err.message, 'PDF_EXCEPTION');
+  } finally {
+    if (docId) { try { DriveApp.getFileById(docId).setTrashed(true); } catch (e) {} }
+  }
+}
+
+// HTML → Google 문서 (기존 BusinessTools.gs 의 변환 함수가 있으면 그대로 사용, 없으면 Drive 고급 서비스)
+function convertHtmlToGoogleDoc_(blob, title) {
+  if (typeof insertConvertedDriveFile_ === 'function') {
+    return insertConvertedDriveFile_({ title: title, mimeType: MimeType.GOOGLE_DOCS }, blob, { convert: true }).id;
+  }
+  if (typeof Drive !== 'undefined' && Drive.Files) {
+    if (typeof Drive.Files.insert === 'function') return Drive.Files.insert({ title: title, mimeType: MimeType.GOOGLE_DOCS }, blob, { convert: true }).id;
+    return Drive.Files.create({ name: title, mimeType: MimeType.GOOGLE_DOCS }, blob).id;
+  }
+  throw new Error('HTML 을 Google 문서로 바꾸는 기능이 없습니다. Apps Script 편집기 왼쪽 "서비스 +" 에서 Drive API 를 추가해 주세요.');
+}
+
+// A4 세로 (595.3 × 841.9pt) · 여백 위 12mm · 아래 14mm · 좌우 12mm — 화면 인쇄 양식과 같은 값
+function setDocA4Portrait_(docId) {
+  var mm = 72 / 25.4;
+  var d = DocumentApp.openById(docId);
+  d.getBody()
+    .setPageWidth(595.3).setPageHeight(841.9)
+    .setMarginTop(12 * mm).setMarginBottom(14 * mm)
+    .setMarginLeft(12 * mm).setMarginRight(12 * mm);
+  d.saveAndClose();
+}
 
 function apiGenerateExpensePdf_(payload) {
   try {
