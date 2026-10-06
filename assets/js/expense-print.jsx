@@ -907,7 +907,9 @@ async function htmlToPdfBlob(html) {
   const iframe = document.createElement('iframe');
   iframe.setAttribute('aria-hidden', 'true');
   iframe.setAttribute('tabindex', '-1');
-  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none;';
+  // 틀 높이를 넉넉히(스크롤이 생기지 않게) — 윈도우는 스크롤바가 자리(약 17px)를 차지해
+  // 내용이 오른쪽으로 밀려 찍히고 오른쪽 끝이 잘리던 문제
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:20000px;border:0;opacity:0;pointer-events:none;';
   document.body.appendChild(iframe);
   try {
     await new Promise((res) => { iframe.onload = res; iframe.srcdoc = html; });
@@ -915,7 +917,9 @@ async function htmlToPdfBlob(html) {
     const doc = iframe.contentDocument;
     // 본문 폭 = A4 − 좌우 여백 (화면용 안쪽 여백은 없앰 — 여백은 PDF 페이지 여백으로)
     const fit = doc.createElement('style');
-    fit.textContent = `html,body{margin:0!important;padding:0!important;background:#fff!important}body{width:${210 - mg.l - mg.r}mm!important}`;
+    fit.textContent = `html,body{margin:0!important;padding:0!important;background:#fff!important;overflow:hidden!important;scrollbar-width:none!important}`
+      + `::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}`
+      + `body{width:${210 - mg.l - mg.r}mm!important}`;
     doc.head.appendChild(fit);
     try { if (doc.fonts && doc.fonts.ready) await doc.fonts.ready; } catch (e) {}
     const h2p = await _loadHtml2PdfInto(win);
