@@ -1029,21 +1029,11 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setGeneratingPdf(true);
     try {
       const roundNo = Number(form.paymentCount) || 1;
-      const docsHtml = await window.buildExpenseDocsHtml(buildPrintHtml());
       const safe = (v) => String(v || '').replace(/[\\/:*?"<>|]/g, '_').trim();
       const fileName = `지출품의서_${safe(contract.projectName) || contract.no}_${roundNo}차`;
-      const res = await apiClient.generateExpensePdfFromHtml({ contractNo: contract.no, html: docsHtml, fileName });
-      if (!res.pdf?.base64) throw new Error('PDF 생성 실패');
-      const bin = atob(res.pdf.base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = res.pdf.fileName || `${fileName}.pdf`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      // [🖨️ 출력]과 같은 모양으로 브라우저에서 PDF 생성 (안 되면 Apps Script 변환)
+      const { blob } = await window.makePrintPdf(buildPrintHtml(), { contractNo: contract.no, fileName });
+      window.downloadBlob(blob, `${fileName}.pdf`);
       toast?.('PDF 다운로드 완료', 'success');
 
       // Drive 자동 업로드 (자격 증명 있을 때만)

@@ -866,21 +866,144 @@ function buildExpenseDocsHtml(html) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════
+// PDF 만들기 — [🖨️ 출력]과 똑같은 모양 (v3.25)
+//   인쇄용 HTML 을 화면 밖 A4 틀에 그대로 그린 뒤 html2pdf(html2canvas + jsPDF)로 A4 PDF 로 만든다.
+//   · 여백은 각 양식의 @page 값을 그대로 사용 → 출력물과 같은 배치·글꼴·줄 간격
+//   · 페이지 나눔은 양식의 page-break(상세내역 등)를 따르고, 표의 줄·서명란은 중간에서 끊지 않음
+//   · 글자는 그림으로 들어가므로 PDF 안에서 글자 선택·검색은 안 됨
+//   · 변환 도구는 처음 한 번 CDN 에서 불러옴 (실패하면 호출한 쪽이 Apps Script 변환으로 대신함)
+// ═══════════════════════════════════════════════════════════════
+const HTML2PDF_SRCS = [
+  'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js',
+  'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
+  'https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
+];
+function _loadHtml2PdfInto(win) {
+  const srcs = window.HTML2PDF_SRC ? [window.HTML2PDF_SRC] : HTML2PDF_SRCS;
+  return (async () => {
+    for (const src of srcs) {
+      try {
+        await new Promise((res, rej) => {
+          const s = win.document.createElement('script');
+          s.src = src; s.onload = res; s.onerror = () => rej(new Error(src));
+          win.document.head.appendChild(s);
+        });
+        if (win.html2pdf) return win.html2pdf;
+      } catch (e) { /* 다음 주소 시도 */ }
+    }
+    throw new Error('PDF 변환 도구(html2pdf)를 불러오지 못했습니다');
+  })();
+}
+// @page { margin: 위 오른쪽 아래 왼쪽 } (mm) — 값 1~4개 모두 지원
+function _pageMarginsMm(html) {
+  const m = /@page\s*\{[^}]*margin:\s*([^;}]+)/.exec(html);
+  const v = m ? m[1].trim().split(/\s+/).map(x => parseFloat(x)) : [12];
+  const [t, r = t, b = t, l = r] = v.map(x => (isNaN(x) ? 12 : x));
+  return { t, r, b, l };
+}
+async function htmlToPdfBlob(html) {
+  const mg = _pageMarginsMm(html);
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.setAttribute('tabindex', '-1');
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(iframe);
+  try {
+    await new Promise((res) => { iframe.onload = res; iframe.srcdoc = html; });
+    const win = iframe.contentWindow;
+    const doc = iframe.contentDocument;
+    // 본문 폭 = A4 − 좌우 여백 (화면용 안쪽 여백은 없앰 — 여백은 PDF 페이지 여백으로)
+    const fit = doc.createElement('style');
+    fit.textContent = `html,body{margin:0!important;padding:0!important;background:#fff!important}body{width:${210 - mg.l - mg.r}mm!important}`;
+    doc.head.appendChild(fit);
+    try { if (doc.fonts && doc.fonts.ready) await doc.fonts.ready; } catch (e) {}
+    const h2p = await _loadHtml2PdfInto(win);
+    // 설정 객체는 틀(iframe) 안에서 만들어야 함 — 바깥 창에서 만든 배열은 틀 안 html2pdf 가 배열로 인식하지 못함
+    const opt = win.JSON.parse(JSON.stringify({
+      margin: [mg.t, mg.l, mg.b, mg.r],
+      image: { type: 'jpeg', quality: 0.96 },
+      html2canvas: { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.doc-head', '.closing', '.agree', 'table.sign', 'table.parties', '.amount', 'table.fund', 'h2', 'h3'] },
+    }));
+    const out = await h2p().set(opt).from(doc.body).outputPdf('blob');
+    // 틀 안에서 만든 Blob 을 바깥 창 Blob 으로 (다운로드·Drive 업로드에서 그대로 쓰도록)
+    return new Blob([await out.arrayBuffer()], { type: 'application/pdf' });
+  } finally {
+    setTimeout(() => iframe.remove(), 0);
+  }
+}
+window.htmlToPdfBlob = htmlToPdfBlob;
+
+// 출력과 같은 PDF 를 만들고(브라우저), 안 되면 Apps Script 변환으로 대신 — { blob, via: 'browser'|'server' }
+async function makePrintPdf(html, { contractNo, fileName } = {}) {
+  try {
+    return { blob: await htmlToPdfBlob(html), via: 'browser' };
+  } catch (e1) {
+    console.warn('[PDF] 브라우저 변환 실패 → Apps Script 변환', e1);
+    const docsHtml = await buildExpenseDocsHtml(html);
+    const res = await window.apiClient.generateExpensePdfFromHtml({ contractNo, html: docsHtml, fileName });
+    if (!res.pdf || !res.pdf.base64) throw new Error('PDF 생성 실패');
+    const bin = atob(res.pdf.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { blob: new Blob([bytes], { type: 'application/pdf' }), via: 'server' };
+  }
+}
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+window.makePrintPdf = makePrintPdf;
+window.downloadBlob = downloadBlob;
+
 // 숨은 iframe 에 문서를 넣고 인쇄 다이얼로그 오픈 (A4 세로는 문서 내 @page 로 지정됨)
+//  - iframe 을 0×0 이 아니라 실제 A4 크기(화면 밖)로 둠: 크기 0 인 틀에서 인쇄하면 일부 프린터·브라우저에서
+//    페이지 폭을 잘못 잡아 오른쪽이 잘리는 문제가 있었음
+//  - 인쇄 직전 본문이 인쇄 폭을 넘는지 재서, 넘으면 그만큼 축소(zoom) — 어떤 양식이든 오른쪽이 잘리지 않게
+//  - 지출품의서 · 설치도급계약서 · 하자보증이행각서 공용
+const PRINT_FIT_CSS = `
+@media print {
+  html, body { width: auto !important; max-width: 100% !important; overflow: visible !important; }
+  table { max-width: 100% !important; }
+}`;
 function printExpenseHtml(html) {
   return new Promise((resolve, reject) => {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('aria-hidden', 'true');
-    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+    iframe.setAttribute('tabindex', '-1');
+    iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none;';
     const cleanup = () => { setTimeout(() => iframe.remove(), 500); };
     iframe.onload = () => {
       try {
         const w = iframe.contentWindow;
+        const doc = iframe.contentDocument;
+        // 인쇄 폭에 맞추기: 화면용 본문 폭(210mm − 좌우 안쪽 여백) 기준으로 넘친 비율만큼 축소
+        try {
+          const st = doc.createElement('style'); st.textContent = PRINT_FIT_CSS; doc.head.appendChild(st);
+          const body = doc.body;
+          const cs = w.getComputedStyle(body);
+          const inner = body.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+          let widest = 0;
+          body.querySelectorAll('*').forEach(el => {
+            const r = el.getBoundingClientRect();
+            if (r.width) widest = Math.max(widest, r.right - body.getBoundingClientRect().left - parseFloat(cs.paddingLeft || 0));
+          });
+          if (inner > 0 && widest > inner + 1) {
+            const z = Math.max(0.8, Math.floor(inner / widest * 1000) / 1000);
+            const zs = doc.createElement('style');
+            zs.textContent = `@media print { body { zoom: ${z}; } }`;
+            doc.head.appendChild(zs);
+          }
+        } catch (e) { /* 측정 실패해도 인쇄는 진행 */ }
         w.addEventListener('afterprint', cleanup);
         setTimeout(() => {
           try { w.focus(); w.print(); resolve(); }
           catch (e) { cleanup(); reject(e); }
-        }, 250);
+        }, 300);
         setTimeout(cleanup, 120000); // 안전장치
       } catch (e) { cleanup(); reject(e); }
     };
