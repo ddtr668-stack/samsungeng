@@ -70,7 +70,8 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
   const [itemsSavedAt, setItemsSavedAt] = useState('');
   const confirmDialog = window.useConfirm ? window.useConfirm() : null;
   const [savedAt, setSavedAt] = useState('');
-  const [doc, setDoc] = useState('contract');   // 'contract' 설치도급계약서 | 'warranty' 하자보증이행각서
+  const [doc, setDoc] = useState('contract');
+  const [driveSaved, setDriveSaved] = useState(null);   // 마지막으로 프로젝트 폴더에 저장한 PDF   // 'contract' 설치도급계약서 | 'warranty' 하자보증이행각서
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -99,10 +100,13 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       setInstallRows(instRows);
       setItemsFile({ name: (inst && !Array.isArray(inst) && inst.filename) || '', url: '' });
       setItemsSavedAt((r.savedAt || {}).install || '');
+      // 이 프로젝트에 저장된 도급계약서·각서 조건: 전용 칸(subcontract) 우선, 없으면 설치비 레코드 안(예전 서버용 보관 위치)
       const saved = items.subcontract && !Array.isArray(items.subcontract) ? items.subcontract : null;
-      if (saved && saved.terms) {
-        setF(x => ({ ...x, ...saved.terms, contractor: { ...x.contractor, ...(saved.terms.contractor || {}) }, sub: { ...x.sub, ...(saved.terms.sub || {}) } }));
-        setSavedAt((r.savedAt || {}).subcontract || '');
+      const terms = (saved && saved.terms) || (installRecRef.current && installRecRef.current.subcontractTerms) || null;
+      if (terms) {
+        const { savedAt: _ignore, ...t } = terms;
+        setF(x => ({ ...x, ...t, contractor: { ...x.contractor, ...(t.contractor || {}) }, sub: { ...x.sub, ...(t.sub || {}) } }));
+        setSavedAt((saved && (r.savedAt || {}).subcontract) || (terms.savedAt || (r.savedAt || {}).install) || '');
       } else if (instRows.length) {
         setF(x => ({ ...x, rows: instRows }));
       }
@@ -228,13 +232,25 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
     setSaving(true);
     try {
       try { localStorage.setItem(SUBC_CONTRACTOR_KEY, JSON.stringify(f.contractor)); } catch {}
-      const r = await apiClient.saveContractItems(contract.no, 'subcontract', { terms: { ...f, amount: String(amount) } });
+      const terms = { ...f, amount: String(amount) };
+      let r;
+      try {
+        r = await apiClient.saveContractItems(contract.no, 'subcontract', { terms });
+      } catch (e1) {
+        // 예전 Apps Script(2026-10-06-02 이전)는 'subcontract' 칸을 모름 → 이 프로젝트의 설치비 레코드 안에 함께 보관
+        if (!/알 수 없는 내역 구분/.test(errMsg(e1))) throw e1;
+        const base = installRecRef.current || { items: [] };
+        const stamp = new Date();
+        const p2 = (n) => String(n).padStart(2, '0');
+        const at = `${stamp.getFullYear()}-${p2(stamp.getMonth() + 1)}-${p2(stamp.getDate())} ${p2(stamp.getHours())}:${p2(stamp.getMinutes())}`;
+        const payload = { ...base, items: base.items || [], history: base.history || [], subcontractTerms: { ...terms, savedAt: at } };
+        r = await apiClient.saveContractItems(contract.no, 'install', payload);
+        installRecRef.current = payload;
+      }
       setSavedAt(r.savedAt || '');
-      toast?.('도급계약서·하자보증각서 조건을 저장했습니다 — 다음에 열면 그대로 불러옵니다', 'success');
+      toast?.(`이 프로젝트(${contract.projectName || contract.no})의 도급계약서·하자보증각서 조건을 저장했습니다 — 다음에 열면 그대로 불러옵니다`, 'success');
     } catch (e) {
-      const msg = errMsg(e);
-      if (/알 수 없는 내역 구분|BAD_PARAM/.test(msg)) toast?.('⚠️ Apps Script 재배포가 필요합니다 (도급계약서 저장 기능 없음). 출력·PDF 는 그대로 쓸 수 있습니다.', 'error');
-      else toast?.('저장 실패: ' + msg, 'error');
+      toast?.('저장 실패: ' + errMsg(e), 'error');
     } finally { setSaving(false); }
   };
   const handlePreview = () => { setPrintHtml(buildHtml()); setPreviewMode(true); };
@@ -260,6 +276,21 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       a.href = url; a.download = res.pdf.fileName || `${fileBase()}.pdf`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       toast?.('PDF 다운로드 완료', 'success');
+      // 이 프로젝트의 Drive 폴더 › 계약서 에도 저장 (지출품의서 PDF 가 '지출품의서' 폴더로 가는 것과 같은 방식)
+      if (window.hasDriveCredentials?.()) {
+        try {
+          const day = (doc === 'warranty' ? (f.pledgeDate || f.endDate) : f.contractDate) || new Date().toISOString().slice(0, 10);
+          const name = `${doc === 'warranty' ? '하자보증이행각서' : '설치도급계약서'}_${String(f.sub.name || '하도급인').replace(/[\\/:*?"<>|]/g, '_')}_${day}.pdf`;
+          const { file } = await window.uploadFileToCategory(contract, 'contract', blob, name);
+          setDriveSaved({ doc, name, url: file?.url || file?.webViewLink || '' });
+          toast?.(`Drive 프로젝트 폴더 › 계약서 에 저장됨 (${name})`, 'success');
+        } catch (e) {
+          console.warn('[도급계약서 PDF Drive 업로드]', e);
+          toast?.('Drive 프로젝트 폴더 저장은 실패 (PDF는 다운로드됨): ' + errMsg(e), 'default');
+        }
+      } else {
+        toast?.('Drive 인증 정보가 없어 프로젝트 폴더에는 저장하지 않았습니다 (설정 → Google Drive 인증 정보).', 'default');
+      }
     } catch (e) {
       const msg = errMsg(e);
       if (/UNKNOWN_ROUTE|알 수 없는 라우트/i.test(msg)) toast?.('⚠️ Apps Script 재배포가 필요합니다 (PDF 기능 없음). 그 전에는 [🖨️ 출력] → PDF로 저장을 사용하세요.', 'error');
@@ -299,7 +330,8 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       footer={
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', width:'100%', gap:8, flexWrap:'wrap'}}>
           <div className="xp-foot-note" style={{fontSize:11, color:'var(--ink-3)'}}>
-            {loading ? '저장된 조건 불러오는 중…' : savedAt ? `마지막 저장 ${String(savedAt).slice(5)}` : '저장하면 이 계약의 도급 조건이 보관됩니다.'}
+            {loading ? '저장된 조건 불러오는 중…' : savedAt ? `이 프로젝트에 저장됨 · ${String(savedAt).slice(5, 16)}` : '[저장] = 이 프로젝트의 조건 보관 · [PDF] = 프로젝트 Drive 폴더 › 계약서'}
+            {driveSaved && driveSaved.url && <> · <a href={driveSaved.url} target="_blank" rel="noreferrer">방금 저장한 PDF 열기 ↗</a></>}
           </div>
           <div className="xp-foot-btns" style={{display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end'}}>
             <button className="btn-ghost" onClick={onClose} disabled={busy}>취소</button>

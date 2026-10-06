@@ -297,7 +297,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     const label = { product:'제품대', install:'설치비', etc:'기타경비', commission:'영업수수료' }[kind];
     const rows = { product: productItems, install: installItems, etc: etcItems, commission: commissionItems }[kind] || [];
-    const payload = { items: rows };
+    // 같은 레코드에 함께 보관된 다른 값(예: 도급계약서 조건 subcontractTerms)은 그대로 두고 품목만 바꿈
+    const payload = { ...(savedRecordsRef.current[kind] || {}), items: rows };
     if (kind === 'product') { payload.summary = productSummary || null; payload.filename = productFilename || ''; }
     if (kind === 'install') payload.filename = installFilename || '';
     // 저장된 수기 지급이력은 그대로 유지
