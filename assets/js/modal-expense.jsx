@@ -542,8 +542,14 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 지금 작성 중인 회차(같은 회차번호)로 이미 저장된 기록은 '이전 지급'이 아님 → 제외
   // (같은 회차를 다시 열어 출력·재저장하면 금회 금액이 이전 누계에 한 번 더 더해지던 문제)
   const curRoundNo = Number(form.paymentCount) || 0;
+  // 지금 작성·수정 중인 기록만 '이전 지급'에서 뺀다.
+  //  - 전회 기성 이력에서 저장된 회차를 골랐으면 → 그 기록 한 줄만 제외
+  //    (같은 회차 번호라도 업체가 달라 따로 저장된 기록은 이미 지급된 것이므로 누계에 포함)
+  //  - 새로 작성 중이면 → 같은 회차 번호 기록 제외 (저장하면 그 기록을 변경 저장하므로)
   // 수기 지급이력은 회차 번호가 같아도 항상 이전 지급으로 집계
-  const activeHistory = expenseHistory.filter(h => h.status !== 'cancelled' && (h.manual || Number(h.roundNo) !== curRoundNo));
+  const activeHistory = expenseHistory.filter(h => h.status !== 'cancelled' && (h.manual || (selectedRound
+    ? String(h.no) !== String(selectedRound)
+    : Number(h.roundNo) !== curRoundNo)));
   const breakdownOf = (h) => (window.expenseRoundBreakdown ? window.expenseRoundBreakdown(h) : { install: Number(h.amount) || 0, product: 0, commission: 0, etc: 0 });
   // 설치비도 '이번 회차 포함'을 끈 회차는 지급액 0
   const previousRounds = activeHistory
@@ -1115,6 +1121,13 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     if (k.included && !String(k.vendor || '').trim()) alerts.push(`${k.name} 업체명이 지정되지 않았습니다.`);
     if (k.included && s.curAmt <= 0) alerts.push(`${k.name}이(가) 포함되어 있지만 금회 금액이 0원입니다.`);
     if (s.over) alerts.push(`${k.name} 금회 누계가 금액보다 ${won(s.finalCum - s.total)}원 많습니다.`);
+    // 금액은 들어 있는데 '이번 회차 제외' — 지급했다면 체크해야 누계에 들어감
+    // (저장된 회차를 열었을 때, 또는 새 회차에서 금액을 직접 입력했을 때만 — 내역서 합계만 있는 경우는 제외)
+    const typed = { product: productAmount, etc: etcAmount, commission: commissionAmount, install: '' }[k.key];
+    const amt = Number(catCurrentInput[k.key]) || 0;
+    if (!k.included && amt > 0 && (selectedRound || String(typed ?? '') !== '')) {
+      alerts.push(`${k.name} 금액 ${won(amt)}원이 입력돼 있지만 '이번 회차 제외' 상태라 누계에 들어가지 않습니다. 지급했다면 체크하세요.`);
+    }
   });
   if (contractTotal > 0 && cushion < 0) alerts.push(`지급 후 누적 지급이 발주처 입금 누계보다 ${won(cushion)}원 많습니다.`);
 
