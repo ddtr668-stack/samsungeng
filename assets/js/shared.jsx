@@ -282,6 +282,9 @@ const Sidebar = ({ current, onNav, counts, onLogout, managers, activeManager, on
             로그아웃
           </button>
         )}
+        {window.APP_VERSION && (
+          <div style={{marginTop:8,fontSize:10.5,opacity:.55,textAlign:'center'}}>화면 버전 v{window.APP_VERSION}</div>
+        )}
       </div>
     </aside>
   );

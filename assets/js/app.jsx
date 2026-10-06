@@ -37,6 +37,25 @@ const App = () => {
   const [uiTick, setUiTick] = useState(0);
   const bumpUi = useCallback(() => setUiTick(t => t + 1), []);
 
+  // 새 버전 알림 — 브라우저가 예전 화면 파일을 쓰고 있으면 [새로고침] 안내
+  const [newVersion, setNewVersion] = useState(null);
+  useEffect(() => {
+    const mine = String(window.APP_VERSION || '');
+    if (!mine) return;
+    const check = async () => {
+      try {
+        const res = await fetch('index.html?t=' + Date.now(), { cache: 'no-store' });
+        const m = (await res.text()).match(/APP_VERSION\s*=\s*'([^']+)'/);
+        if (m && m[1] !== mine) setNewVersion(m[1]);
+      } catch (e) { /* 오프라인 등 — 무시 */ }
+    };
+    check();
+    const t = setInterval(check, 5 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
+
   // Persist route
   useEffect(() => {
     localStorage.setItem('hb.route', JSON.stringify(route));
@@ -201,6 +220,19 @@ const App = () => {
 
   return (
     <ToastProvider>
+      {newVersion && (
+        <div className="no-print" role="status"
+          style={{position:'fixed',left:'50%',top:14,transform:'translateX(-50%)',zIndex:10000,
+            background:'#1a5490',color:'#fff',borderRadius:10,padding:'10px 14px',
+            boxShadow:'0 10px 28px rgba(0,0,0,.22)',display:'flex',alignItems:'center',gap:12,
+            fontSize:13,maxWidth:'calc(100vw - 32px)',flexWrap:'wrap'}}>
+          <span>새 버전(v{newVersion})이 나왔습니다. 새로고침하면 바로 적용됩니다.</span>
+          <button type="button" onClick={() => location.reload()}
+            style={{background:'#fff',color:'#1a5490',border:0,borderRadius:7,padding:'6px 12px',fontWeight:700,cursor:'pointer'}}>
+            새로고침
+          </button>
+        </div>
+      )}
       {idleLeft != null && (
         <div className="no-print" role="alertdialog" aria-live="assertive"
           style={{position:'fixed',left:'50%',bottom:24,transform:'translateX(-50%)',zIndex:9999,
