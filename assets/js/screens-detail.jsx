@@ -334,7 +334,7 @@ const ManagerField = ({ contract, onUpdated }) => {
   );
 };
 
-const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated, onSelectContract }) => {
+const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onOpenSubcontract, onUpdated, onSelectContract }) => {
   // contractNo는 실제로는 계약의 고유 id (중복 no 대응)
   const baseContract = data.contracts.find(x => (x.id ?? x.no) === contractNo);
   const toast = window.useToast ? window.useToast() : null;
@@ -746,6 +746,11 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onUpdated, onSe
               <button className="btn-ghost" onClick={startEdit}>
                 <Icon name="edit" size={14}/>수정
               </button>
+              {onOpenSubcontract && (
+                <button className="btn-ghost" onClick={() => onOpenSubcontract(c)} title="설치도급계약서 작성·출력">
+                  <Icon name="file" size={14}/>도급계약서
+                </button>
+              )}
               {c.subcontractor && (
                 <button className="btn-primary" onClick={() => onOpenExpense && onOpenExpense(c)}>
                   <Icon name="file" size={14}/>지출품의서 생성

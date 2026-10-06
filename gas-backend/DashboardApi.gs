@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-10-06-01 (지출품의서 PDF 새 양식)';
+var BUILD_VERSION_ = '2026-10-06-02 (설치도급계약서)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -249,7 +249,7 @@ function apiUpdateContract_(payload) {
 // 지출품의서를 저장하지 않아도 불러온 품목 내역을 계약별로 보관 → 다음에 열면 자동으로 불러옴
 // ============================================================
 var CONTRACT_ITEMS_SHEET_ = '계약내역서';
-var CONTRACT_ITEM_KINDS_ = ['product', 'install', 'etc', 'commission'];
+var CONTRACT_ITEM_KINDS_ = ['product', 'install', 'etc', 'commission', 'subcontract'];   // subcontract = 설치도급계약서 조건
 
 function getContractItemsSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
