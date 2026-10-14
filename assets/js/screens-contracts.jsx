@@ -97,7 +97,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
         <div className="hstack">
           <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
           <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('contracts',
-            ['계약번호','시트NO','계약일','담당자','구분','거래처','프로젝트명','도급업체','계약금','수금액','잔금','이윤','진행률','상태'],
+            ['계약번호','시트NO','계약일','담당자','구분','거래처','프로젝트명','도급업체','계약금','수금액','잔금','이익금','진행률','상태'],
             sorted.map(c => [contractCode(c), c.sheetNo ?? c.no, c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.subcontractor || '', c.totalAmount, c.paidAmount, c.balance, c.profit, Math.round((c.progress || 0) * 100) + '%', c.status]))}>
             <Icon name="download" size={14}/>엑셀 내보내기</button>
         </div>
@@ -155,13 +155,13 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
 
           <div style={{fontSize:12,color:'var(--ink-3)'}}>
             정렬: <b style={{color:'var(--ink-2)'}}>{
-              {no:'계약번호', contractDate:'계약일', totalAmount:'계약금액', balance:'미수잔금', marginRate:'마진율', progress:'진행률'}[sortKey]
+              {no:'계약번호', contractDate:'계약일', totalAmount:'계약금액', balance:'미수잔금', profit:'이익금', marginRate:'마진율', progress:'진행률'}[sortKey]
             } {sortDir === 'asc' ? '↑' : '↓'}</b>
           </div>
         </div>
 
         <div className="tbl-wrap">
-          <table className="tbl">
+          <table className="tbl contracts-tbl">
             <thead>
               <tr>
                 <th className="sortable" onClick={() => toggleSort('no')} style={{width:104}}>
@@ -180,6 +180,9 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
                 <th className="right sortable" onClick={() => toggleSort('balance')} style={{width:110}}>
                   잔금 <span className="sarr">{sortKey==='balance' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
                 </th>
+                <th className="right sortable" onClick={() => toggleSort('profit')} style={{width:120}}>
+                  이익금 <span className="sarr">{sortKey==='profit' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
+                </th>
                 <th className="center sortable" onClick={() => toggleSort('progress')} style={{width:100}}>
                   진행률 <span className="sarr">{sortKey==='progress' ? (sortDir==='asc'?'▲':'▼') : '⇅'}</span>
                 </th>
@@ -188,7 +191,7 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
             </thead>
             <tbody>
               {paged.length === 0 && (
-                <tr><td colSpan="10" className="empty">
+                <tr><td colSpan="11" className="empty">
                   <Icon name="search" size={32} stroke={1.4}/>
                   <div>검색 조건에 맞는 계약이 없습니다.</div>
                 </td></tr>
@@ -201,14 +204,18 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
                   <td style={{fontSize:12.5,color:'var(--ink-2)',fontWeight:500,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.client}</td>
                   <td style={{fontSize:12.5,color:'var(--ink-2)',whiteSpace:'nowrap'}}>{c.manager || '—'}</td>
                   <td className="proj-cell">
-                    <div className="p-name">{c.projectName || <span className="muted">(제목 없음)</span>}</div>
-                    {c.subcontractor && <div className="p-client">도급 · {c.subcontractor}</div>}
+                    <div className="p-name" title={c.projectName || ''}>{c.projectName || <span className="muted">(제목 없음)</span>}</div>
+                    {c.subcontractor && <div className="p-client" title={`도급 · ${c.subcontractor}`}>도급 · {c.subcontractor}</div>}
                   </td>
                   <td className="right"><Amt v={c.totalAmount}/></td>
                   <td className="right">
                     {c.balance > 0
                       ? <Amt v={c.balance} className="neg"/>
                       : <span className="amt mute">완결</span>}
+                  </td>
+                  <td className="right" title={c.totalAmount > 0 ? `마진율 ${((c.profit || 0) / c.totalAmount * 100).toFixed(1)}%` : ''}>
+                    <Amt v={c.profit} className={(c.profit || 0) < 0 ? 'neg' : 'pos'}/>
+                    {c.totalAmount > 0 && c.profit ? <div style={{fontSize:10.5,color:'var(--ink-3)',fontVariantNumeric:'tabular-nums'}}>{((c.profit || 0) / c.totalAmount * 100).toFixed(1)}%</div> : null}
                   </td>
                   <td className="center"><MiniProgress value={c.progress}/></td>
                   <td className="center"><StatusPill status={c.status}/></td>
