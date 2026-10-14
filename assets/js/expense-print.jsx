@@ -502,32 +502,7 @@ function buildExpensePrintHtml(d) {
           <td class="r">${cumT > 0 ? _pPct(cumF / cumT * 100) : '-'}</td>
         </tr>` : '';
 
-  // ── 자금 확인 : 발주처 입금 누계 · 미수금 · 지급 후 누적 지급(네 항목 전체) · 자금 여유 ──
-  const received = d.received !== undefined ? (Number(d.received) || 0) : (Number(c.paidAmount) || 0);
-  const contractSum = Number(c.totalAmount) || 0;
-  const paidAfterAll = productPrevCum + installPrevCum + etcPrevCum + commissionPrevCum
-    + (includeProduct ? productCur : 0) + (includeInstall ? req : 0) + (includeEtc ? etcCur : 0) + (includeCommission ? commissionCur : 0);
-  const cushion = received - paidAfterAll;
-  const fundTable = `<table class="fund">
-    <colgroup><col style="width:34mm"><col><col style="width:44mm"><col></colgroup>
-    <tr>
-      <th>지급 후 누적 지급</th><td>${_pNum(paidAfterAll)}<span class="sub">(네 항목 · 이번 회차 포함)</span></td>
-      <th>자금 여유 (수금 − 지급)</th><td class="hl">${cushion < 0 ? '−' : '+'}${_pNum(Math.abs(cushion))}<span class="sub">수금 ${_pNum(received)} 기준</span></td>
-    </tr>
-  </table>`;
-
-  // ── 비고 자동 문구 : 정정 반영 · 이번 회차 제외 항목 ──
-  const autoNotes = [];
-  (d.corrections || []).forEach(k => { if (k && k.text) autoNotes.push(`※ ${k.text}`); });
-  const _excl = [
-    !includeProduct && (productTotalBudget > 0 || productPrevCum > 0) && '제품대',
-    !includeInstall && (installTotalBudget > 0 || installPrevCum > 0) && '설치비',
-    !includeEtc && (etcTotalBudget > 0 || etcPrevCum > 0) && '기타비용',
-    !includeCommission && (commissionTotalBudget > 0 || commissionPrevCum > 0) && '영업수수료',
-  ].filter(Boolean);
-  if (_excl.length) autoNotes.push(`※ ${_excl.join('·')}는 이번 회차에서 제외`);
-  if (cushion < 0 && contractSum > 0) autoNotes.push(`※ 지급 후 누적 지급이 발주처 입금 누계보다 ${_pNum(-cushion)}원 많음`);
-  const autoNoteHtml = autoNotes.length ? `<div class="auto-note">${autoNotes.map(_pEsc).join('<br>')}</div>` : '';
+  // (출력물에서 '지급 후 누적 지급 · 자금 여유' 표와 비고 자동 문구는 빼기로 함 — 비고는 직접 쓴 내용만)
 
   // ── 금회 요청금액(체크된 항목 합계) 안내 문구 (동일 순서) ──
   const noteParts = [];
@@ -583,7 +558,6 @@ function buildExpensePrintHtml(d) {
     </tr>
   </table>
   <div class="amount-note">${amountNote}</div>
-  ${fundTable}
 
   <div class="scope13">
   <div class="sec">
@@ -610,7 +584,7 @@ function buildExpensePrintHtml(d) {
 
   <div class="sec">
     <h2>□ 비고 사항</h2>
-    <div class="note-box">${autoNoteHtml}${f.note ? _pEsc(f.note) : ''}</div>
+    <div class="note-box">${f.note ? _pEsc(f.note) : ''}</div>
   </div>
 
   <div class="closing">
