@@ -359,6 +359,9 @@ table.tbl{width:100%;border-collapse:separate;border-spacing:0}
 .tbl{table-layout:auto}
 .tbl td, .tbl th{overflow:hidden}
 .tbl td .p-name, .tbl td .p-client{display:block}
+/* 긴 프로젝트명·도급 정보(전화번호 등)가 표를 넓혀 가로 스크롤이 생기지 않도록 폭 제한 (마우스를 올리면 전체 보기) */
+.tbl td.proj-cell .p-name, .tbl td.proj-cell .p-client{max-width:250px}
+.tbl.contracts-tbl td, .tbl.contracts-tbl th{padding-left:9px;padding-right:9px}
 
 /* mini bar for progress */
 .mini-bar{
