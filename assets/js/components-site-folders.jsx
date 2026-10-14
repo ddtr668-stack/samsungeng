@@ -190,7 +190,8 @@ const FilePreviewModal = ({ open, file, onClose }) => {
 };
 
 // ─── 개별 카테고리 로우 ───
-const CategoryRow = ({ category, state, onPreview, onCreateFolder, disabled }) => {
+// ※ 지출품의서의 CategoryRow 와 이름이 겹치면(전역 공유) 이 카드가 지출 행으로 그려지므로 고유 이름 사용
+const SiteFolderRow = ({ category, state, onPreview, onCreateFolder, disabled }) => {
   const { folder, latestFile, fileCount } = state;
   const hasFolder = !!folder;
   const hasFile = !!latestFile;
@@ -694,7 +695,7 @@ const SiteFoldersCard = ({ contract }) => {
       {!isPending && !needConnect && (
         <div style={{display:'flex', flexDirection:'column', gap:6}}>
           {SITE_CATEGORIES.map(cat => (
-            <CategoryRow
+            <SiteFolderRow
               key={cat.key}
               category={cat}
               state={state.categories[cat.key] || { folder:null, latestFile:null, fileCount:0 }}
@@ -740,4 +741,4 @@ const SiteFoldersCard = ({ contract }) => {
 // ─── 전역 노출 ───
 window.SiteFoldersCard = SiteFoldersCard;
 window.FilePreviewModal = FilePreviewModal;
-window.CategoryRow = CategoryRow;
+window.SiteFolderRow = SiteFolderRow;
