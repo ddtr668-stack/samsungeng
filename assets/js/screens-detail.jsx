@@ -377,6 +377,27 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onOpenSubcontra
     setNoteDraft('');
   }, [contractNo]);
 
+  // ─── 제품대 지급 현황 (지급완료 버튼용 · 훅은 early return 앞에) ───
+  const PRODUCT_DONE_NOTE = '지급완료 처리';
+  const [productPay, setProductPay] = useState(null);   // { paid, record, hist, maxRound }
+  const loadProductPay = useCallback(async () => {
+    if (!baseContract?.no || typeof hasApiUrl !== 'function' || !hasApiUrl() || !apiClient.getContractItems) { setProductPay(null); return; }
+    try {
+      const [ci, eh] = await Promise.all([apiClient.getContractItems(baseContract.no), apiClient.expenseByContract(baseContract.no)]);
+      const v = (ci.items || {}).product;
+      const record = Array.isArray(v) ? { items: v } : (v || { items: [] });
+      const manual = record.history || [];
+      const hist = (eh.history || []).filter(h => h.status !== 'cancelled');
+      const bd = (h) => (window.expenseRoundBreakdown ? window.expenseRoundBreakdown(h).product : 0);
+      const paid = hist.reduce((sum, h) => sum + (bd(h) || 0), 0) + manual.reduce((sum, m) => sum + (Number(m.amount) || 0), 0);
+      const maxRound = Math.max(0, ...hist.map(h => Number(h.roundNo) || 0), ...manual.map(m => Number(m.roundNo) || 0));
+      setProductPay({ paid: Math.round(paid), record, maxRound });
+    } catch (e) { setProductPay(null); }
+  }, [baseContract?.no]);
+  // 데이터 새로고침(지출품의서 저장 등) 때도 다시 계산
+  useEffect(() => { loadProductPay(); }, [loadProductPay, data]);
+  useEffect(() => { setProductPay(null); }, [baseContract?.no]);
+
   if (!baseContract) return (
     <>
       <button className="back-btn" onClick={onBack}><Icon name="chevronLeft" size={14}/>계약 리스트로</button>
@@ -462,6 +483,44 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onOpenSubcontra
     const amount = Number(String(v).replace(/[^0-9]/g, '')) || 0;
     if (amount >= c.subcontractAmount) { toast?.('도급비보다 적은 금액을 입력하세요', 'error'); return; }
     saveSubcontractPaid(amount, `지급액을 ${fmtKRW(amount)}원으로 변경했습니다`);
+  };
+
+  // ─── 제품대 지급완료 (지출품의서 없이 별도로 지급한 경우) ───
+  // 남은 금액을 제품대 '수기 지급이력'(계약내역서 history)에 한 줄로 기록 → 지출품의서 누계·출력물도 100%
+  const productRemain = productPay ? Math.max(0, (c.productCost || 0) - productPay.paid) : null;
+  const productPaidDone = c.productCost > 0 && productPay && productRemain === 0;
+  const saveProductHistory = async (history, okMsg) => {
+    setSaving(true);
+    try {
+      const rec = { ...productPay.record, items: productPay.record.items || [], history };
+      await apiClient.saveContractItems(baseContract.no, 'product', rec);
+      toast?.(okMsg, 'success');
+      await loadProductPay();
+    } catch (e) {
+      toast?.('저장 실패: ' + e.message, 'error');
+    } finally { setSaving(false); }
+  };
+  const markProductPaid = () => {
+    if (saving || !productPay) return;
+    const msg = `제품대 남은 금액 ${fmtKRW(productRemain)}원을 지급완료로 처리할까요?`
+      + `\n(지급 ${fmtKRW(productPay.paid)}원 → ${fmtKRW(c.productCost)}원 · 제품대 지급이력에 '${PRODUCT_DONE_NOTE}'로 기록)`;
+    if (!window.confirm(msg)) return;
+    const history = [...(productPay.record.history || []), {
+      roundNo: productPay.maxRound + 1, docDate: new Date().toISOString().slice(0, 10),
+      amount: productRemain, note: PRODUCT_DONE_NOTE + ' (별도 지급)',
+    }];
+    saveProductHistory(history, '제품대 지급완료 처리했습니다');
+  };
+  const undoProductPaid = () => {
+    if (saving || !productPay) return;
+    const hist = productPay.record.history || [];
+    const keep = hist.filter(m => !String(m.note || '').startsWith(PRODUCT_DONE_NOTE));
+    if (keep.length === hist.length) {
+      toast?.('지출품의서·지급이력으로 전액 지급된 상태입니다. 지급이력은 지출품의서 창의 제품대 항목에서 고칠 수 있습니다.', 'default');
+      return;
+    }
+    if (!window.confirm('제품대 지급완료 처리를 취소할까요? (지급완료로 기록한 줄만 지워집니다)')) return;
+    saveProductHistory(keep, '제품대 지급완료를 취소했습니다');
   };
 
   // 해당 거래처의 다른 계약
@@ -810,10 +869,21 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onOpenSubcontra
           field="productCost" label="제품대 (장비대)" dotColor="#8f6d3a"
           value={c.productCost}
           sub={c.productCost > 0
-            ? `총액 대비 ${fmtPct(c.totalAmount>0 ? c.productCost/c.totalAmount : 0)}`
+            ? (productPay
+                ? (productPaidDone ? '지급완료' : `지급 ${fmtKRW(productPay.paid)} · 잔액 ${fmtKRW(productRemain)}`)
+                : `총액 대비 ${fmtPct(c.totalAmount>0 ? c.productCost/c.totalAmount : 0)}`)
             : (c.productCostNote ? `📎 ${c.productCostNote}` : '미입력')}
           inlineField={inlineField} inlineValue={inlineValue} setInlineValue={setInlineValue}
           onEdit={startInlineEdit} onSave={saveInlineEdit} onCancel={cancelInlineEdit} saving={saving}
+          extraAction={c.productCost > 0 && productPay && (typeof canEdit !== 'function' || canEdit()) ? (productPaidDone ? {
+            label: '✓ 지급완료', variant: 'done', disabled: saving,
+            title: '지급완료 처리됨 · 누르면 지급완료 처리를 취소합니다',
+            onClick: undoProductPaid,
+          } : {
+            label: '지급완료', disabled: saving,
+            title: '제품대 남은 금액을 지급완료로 처리 (다른 경로로 지급한 경우 · 지출품의서 누계에도 반영)',
+            onClick: markProductPaid,
+          }) : null}
         />
         <KpiCard
           field="subcontractAmount" label="설치비 (도급비)" dotColor="#8f6d3a"
