@@ -1098,6 +1098,8 @@ function _roundBreakdown(r) {
   };
 }
 
+// 회차 지급금액 = 그 회차에 '이번 회차 포함'으로 지급한 항목 합계 (제외한 설치비 금액은 빼고)
+const _roundTotal = (r) => { const b = _roundBreakdown(r); return b.install + b.product + b.etc + b.commission; };
 const PreviousRoundDropdown = ({ history, selected, onSelect }) => {
   // 삭제(취소) 처리된 회차는 목록에서 제외 — "설치비 기성" 표와 동일한 기준
   const rounds = (history || []).filter(r => r.status !== 'cancelled');
@@ -1112,7 +1114,7 @@ const PreviousRoundDropdown = ({ history, selected, onSelect }) => {
         <option value="">▼ 이전 회차 선택 (신규 회차)</option>
         {rounds.map((r, idx) => (
           <option key={r.no || idx} value={r.no || idx}>
-            {r.roundNo}차 · {_fmtDate(r.docDate)} · {_fmtNum(r.amount)}원{r.manual ? ' · (수기)' : ''}{r.note ? ` · ${r.note}` : ''}
+            {r.roundNo}차 · {_fmtDate(r.docDate)} · {_fmtNum(_roundTotal(r))}원{r.manual ? ' · (수기)' : ''}{r.note ? ` · ${r.note}` : ''}
           </option>
         ))}
       </select>
@@ -1122,7 +1124,7 @@ const PreviousRoundDropdown = ({ history, selected, onSelect }) => {
         const bd = _roundBreakdown(found);
         return (
           <div style={{marginTop:6, padding:'8px 10px', background:'var(--blue-50, #EEF4F8)', border:'1px solid #C8DBE5', borderRadius:6, fontSize:11, color:'#1a5490', lineHeight:1.6}}>
-            <b>{found.roundNo}차 기성 지출 내역</b> · 지출일 <b>{_fmtDate(found.docDate)}</b> · 지급금액 <b>{_fmtNum(found.amount)}원</b>
+            <b>{found.roundNo}차 기성 지출 내역</b> · 지출일 <b>{_fmtDate(found.docDate)}</b> · 지급금액 <b>{_fmtNum(bd.install + bd.product + bd.etc + bd.commission)}원</b>
             {found.pdfLink && <> · PDF: <a href={found.pdfLink} target="_blank" rel="noreferrer" style={{color:'var(--blue-500, #1a5490)'}}>열기 ↗</a></>}
             <div style={{marginTop:4, display:'flex', flexWrap:'wrap', gap:'4px 10px', fontSize:10.5, color:'#3a6a8a'}}>
               <span>설치비 {_fmtNum(bd.install)}원</span>

@@ -519,12 +519,7 @@ function buildExpensePrintHtml(d) {
 
   const body = `
   <div class="doc-head">
-    <div class="doc-title">지 출 품 의 서</div>
-    <table class="sign">
-      <tr><th class="v" rowspan="3">결<br>재</th><th class="h">담당</th><th class="h">검토</th><th class="h">승인</th></tr>
-      <tr><td class="s"></td><td class="s"></td><td class="s"></td></tr>
-      <tr><td class="d">/</td><td class="d">/</td><td class="d">/</td></tr>
-    </table>
+    <div class="doc-title" style="text-align:center;padding-left:0">지 출 품 의 서</div>
   </div>
 
   <table class="subject">
