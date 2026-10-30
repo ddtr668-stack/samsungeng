@@ -261,10 +261,16 @@ const BulkExpenseModal = ({ open, onClose, data, onSaved }) => {
     if (!window.confirm(`선택한 ${validRows.length}건의 기성 완료액에 금회 청구액(합계 ${_bxNum(total)}원)을 더할까요?\n지출·기성 관리의 잔액과 상태가 바뀝니다.`)) return;
     setApplying(true);
     const failed = [];
-    for (const r of validRows) {
-      try { await apiClient.updateContract(r.c.no, { subcontractPaid: (r.c.subcontractPaid || 0) + r.amount }); }
-      catch (e) { failed.push(`${contractCode(r.c)}: ${e.message}`); }
-    }
+    // (속도) 한 건씩 차례로 → 3건씩 동시에 (서로 다른 계약 행이라 겹치지 않음)
+    const queue = [...validRows];
+    const worker = async () => {
+      while (queue.length) {
+        const r = queue.shift();
+        try { await apiClient.updateContract(r.c.no, { subcontractPaid: (r.c.subcontractPaid || 0) + r.amount }); }
+        catch (e) { failed.push(`${contractCode(r.c)}: ${e.message}`); }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
     setApplying(false);
     if (failed.length) {
       toast?.(`${validRows.length - failed.length}건 반영 · ${failed.length}건 실패\n${failed.join('\n')}`, 'error');
