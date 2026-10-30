@@ -916,35 +916,58 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       }
 
       try {
+        // (속도 v3.19) 화면에서 고친 계약 총액·저장 후 이력 조회를 저장 요청 한 번에 함께 보냄
+        //   예전: 저장 → 계약 총액 저장 → 이력 다시 조회 → 기성금액 반영 (서버 왕복 4번을 차례로 대기)
+        //   지금: 저장 1번 대기 → 기성금액 반영은 화면을 닫지 않고 뒤에서
+        const budgetEditable = changedBudgetKeys.length && (typeof canEdit !== 'function' || canEdit());
+        if (budgetEditable) {
+          payload.budgetPatch = {};
+          changedBudgetKeys.forEach(k => { payload.budgetPatch[BUDGET_META[k].field] = BUDGET_META[k].value; });
+        }
+        payload.returnHistory = true;
         const res = await apiClient.saveExpense(payload);
         const syncedFields = res?.contractSync?.updated || [];
-        // 화면에서 고친 제품대·설치비·기타경비 총액을 계약(상세 화면 금액)에도 반영
+        // 서버가 같이 반영한 총액 (예전 서버는 budgetFields 가 없음 → 따로 저장)
         let budgetLabels = [];
-        if (changedBudgetKeys.length && (typeof canEdit !== 'function' || canEdit())) {
-          try { budgetLabels = await saveBudgets(changedBudgetKeys, { silent: true }); }
-          catch (e) { toast?.('계약 금액 반영 실패: ' + errMsg(e), 'error'); }
+        if (budgetEditable) {
+          const applied = Array.isArray(res?.budgetFields) ? res.budgetFields : [];
+          const done = changedBudgetKeys.filter(k => applied.includes(BUDGET_META[k].field));
+          if (done.length) {
+            setBaseBudgets(b => { const n = { ...b }; done.forEach(k => { n[k] = BUDGET_META[k].value; }); return n; });
+            budgetLabels = done.map(k => BUDGET_META[k].label);
+          }
+          const rest = changedBudgetKeys.filter(k => !done.includes(k));
+          if (rest.length) {
+            try { budgetLabels = budgetLabels.concat(await saveBudgets(rest, { silent: true })); }
+            catch (e) { toast?.('계약 금액 반영 실패: ' + errMsg(e), 'error'); }
+          }
         }
         const head = `${payload.roundNo}차 ${res?.entry?.updated ? '변경 저장 완료' : '저장 완료'}`;
-        // 이력 재로드 — 방금 저장한 차수를 드롭목록에 선택된 상태로 + 설치비 기성금액(누계) 계약에 반영
-        let paid = null;
-        try {
-          const r = await apiClient.expenseByContract(contract.no);
-          setExpenseHistory(r.history || []);
-          if (r.corrections) setCorrections(r.corrections);
+        // 이력 반영 — 서버가 함께 돌려줬으면 그대로, 예전 서버면 한 번 더 조회
+        let hist = Array.isArray(res?.history) ? res.history : null;
+        let corr = res?.corrections || null;
+        if (!hist) {
+          try { const r = await apiClient.expenseByContract(contract.no); hist = r.history || []; corr = r.corrections || null; }
+          catch { /* 이력 재로드 실패는 무시 */ }
+        }
+        if (hist) {
+          setExpenseHistory(hist);
+          if (corr) setCorrections(corr);
           if (res?.entry?.no) setSelectedRound(String(res.entry.no));
-          paid = await syncInstallPaid(r.history || []);
-        } catch { /* 이력 재로드 실패는 무시 */ }
+        }
         const synced = [...syncedFields.map(f => FIELD_LABELS_KO[f] || f), ...budgetLabels];
-        if (paid != null) synced.push(`설치비 기성금액 ${paid.toLocaleString()}원`);
         toast?.(
           synced.length
             ? `${head} (계약 반영: ${[...new Set(synced)].join(', ')})`
             : head,
           'success'
         );
-        // 계약의 설치비/제품대/영업수수료/기타경비가 동기화됐을 수 있으므로
-        // 대시보드 전체 데이터(계약 상세 화면 등)도 함께 새로고침
-        onSaved?.().catch?.(() => {});
+        // 설치비 기성금액(누계) 계약 반영 + 대시보드 전체 새로고침은 기다리지 않고 뒤에서
+        (async () => {
+          const paid = hist ? await syncInstallPaid(hist) : null;
+          if (paid != null) toast?.(`설치비 기성금액 ${paid.toLocaleString()}원 계약에 반영`, 'success');
+          onSaved?.()?.catch?.(() => {});
+        })();
       } catch (e) {
         const msg = errMsg(e);
         // GAS 재배포가 안 된 경우 안내

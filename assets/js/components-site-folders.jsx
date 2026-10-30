@@ -403,6 +403,9 @@ const SiteFoldersCard = ({ contract }) => {
   // 계약 바뀔 때마다 재조회
   useEffect(() => {
     if (mode === 'live') {
+      // 지난번 조회 결과가 있으면 먼저 보여 주고 (빈 화면 대기 없음) 뒤에서 새로 조회
+      const stale = typeof peekFoldersCache === 'function' ? peekFoldersCache(contract?.no) : null;
+      if (stale) setState({ ...stale, _pending: false });
       loadFromDrive(false, false);
     } else {
       setState(getMockSiteFolders(contract));

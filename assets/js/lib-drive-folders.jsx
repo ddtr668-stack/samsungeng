@@ -289,24 +289,54 @@ function isPreviewableMimeType(mimeType) {
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
-// ─── 캐시 (sessionStorage · contract.no 별 TTL 60초) ───
+// ─── 캐시 (localStorage · contract.no 별) ───
+// 60초 안이면 Drive 를 다시 부르지 않고, 그보다 오래됐어도 7일 안이면 화면에 먼저 보여 주고
+// 뒤에서 새로 조회한다 (peekFoldersCache). 탭을 닫았다 열어도 바로 보이도록 localStorage 사용.
 const FOLDERS_CACHE_TTL_MS = 60 * 1000;
-function getFoldersCache(contractNo) {
+const FOLDERS_CACHE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+function _readFoldersCache(contractNo) {
   try {
-    const raw = sessionStorage.getItem('hb.siteFolders.' + contractNo);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.ts || Date.now() - parsed.ts > FOLDERS_CACHE_TTL_MS) return null;
-    return parsed.data;
+    const raw = localStorage.getItem('hb.siteFolders.' + contractNo);
+    return raw ? JSON.parse(raw) : null;
   } catch { return null; }
+}
+function getFoldersCache(contractNo) {
+  const parsed = _readFoldersCache(contractNo);
+  if (!parsed?.ts || Date.now() - parsed.ts > FOLDERS_CACHE_TTL_MS) return null;
+  return parsed.data;
+}
+// 오래된 캐시라도 돌려줌 (화면에 먼저 표시용) — 없거나 7일 지났으면 null
+function peekFoldersCache(contractNo) {
+  const parsed = _readFoldersCache(contractNo);
+  if (!parsed?.ts || Date.now() - parsed.ts > FOLDERS_CACHE_STALE_MS) return null;
+  return parsed.data;
 }
 function setFoldersCache(contractNo, data) {
   try {
-    sessionStorage.setItem('hb.siteFolders.' + contractNo, JSON.stringify({ ts: Date.now(), data }));
+    localStorage.setItem('hb.siteFolders.' + contractNo, JSON.stringify({ ts: Date.now(), data }));
   } catch {}
 }
+// 파일 업로드 등으로 내용이 바뀌었을 때: 다음 조회는 Drive 에서 새로 (화면용 옛 값은 남겨 둠)
 function invalidateFoldersCache(contractNo) {
-  try { sessionStorage.removeItem('hb.siteFolders.' + contractNo); } catch {}
+  try {
+    const parsed = _readFoldersCache(contractNo);
+    if (parsed) localStorage.setItem('hb.siteFolders.' + contractNo, JSON.stringify({ ts: 1, data: parsed.data }));
+  } catch {}
+}
+
+// ─── 폴더 ID 기억 (localStorage · contract.no 별) ───
+// 예전: 파일 하나 올릴 때마다 '현장관리 자료' 아래 폴더 수백 개를 전부 받아 이름으로 찾음
+// 지금: 한 번 찾은 프로젝트·카테고리 폴더 ID 를 기억 → 다음부터는 바로 사용
+//       (폴더명 기준이 바뀌거나 폴더가 지워졌으면 자동으로 다시 찾음)
+const FOLDER_IDS_PREFIX = 'hb.driveFolderIds.';
+function getFolderIds(contractNo) {
+  try { return JSON.parse(localStorage.getItem(FOLDER_IDS_PREFIX + contractNo)) || null; } catch { return null; }
+}
+function setFolderIds(contractNo, ids) {
+  try { localStorage.setItem(FOLDER_IDS_PREFIX + contractNo, JSON.stringify(ids)); } catch {}
+}
+function clearFolderIds(contractNo) {
+  try { localStorage.removeItem(FOLDER_IDS_PREFIX + contractNo); } catch {}
 }
 
 // ─── gapi.client.drive 가 로드되어 있는지 확인 ───
@@ -320,15 +350,94 @@ function ensureDriveClient() {
 }
 
 // ─── Drive REST 래퍼 (gapi.client 사용) ───
+// 폴더가 1000개를 넘어도 빠짐없이 (예전: 500개까지만 → 그 뒤 폴더는 못 찾고 새로 만드는 문제)
 async function driveListFolders(parentId) {
   ensureDriveClient();
-  const res = await window.gapi.client.drive.files.list({
-    q: `'${parentId}' in parents and mimeType='${FOLDER_MIME}' and trashed=false`,
-    fields: 'files(id,name,webViewLink)',
-    pageSize: 500,
-    orderBy: 'name',
-  });
-  return res.result.files || [];
+  const out = [];
+  let pageToken;
+  do {
+    const res = await window.gapi.client.drive.files.list({
+      q: `'${parentId}' in parents and mimeType='${FOLDER_MIME}' and trashed=false`,
+      fields: 'nextPageToken, files(id,name,webViewLink)',
+      pageSize: 1000,
+      orderBy: 'name',
+      pageToken,
+    });
+    out.push(...(res.result.files || []));
+    pageToken = res.result.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+// '현장관리 자료' 폴더 목록 — 5분 동안 메모리에 보관 (여러 작업이 연달아 와도 한 번만 조회)
+let _rootFoldersMemo = null;   // { ts, list }
+async function listRootFolders(force) {
+  if (!force && _rootFoldersMemo && Date.now() - _rootFoldersMemo.ts < 5 * 60 * 1000) return _rootFoldersMemo.list;
+  const list = await driveListFolders(DRIVE_ROOT_FOLDER_ID);
+  _rootFoldersMemo = { ts: Date.now(), list };
+  return list;
+}
+
+// 기억해 둔 폴더가 아직 쓸 수 있는지 (지워지거나 휴지통이면 false)
+async function driveFolderAlive(id) {
+  try {
+    const res = await window.gapi.client.drive.files.get({ fileId: id, fields: 'id,trashed' });
+    return !!res.result && !res.result.trashed;
+  } catch (e) { return false; }
+}
+
+// 계약 → 프로젝트 폴더 (기억해 둔 ID 우선) · create=true 면 없을 때 만듦
+// 반환: Drive 폴더 원본 { id, name, webViewLink } 또는 null
+async function resolveProjectFolder(contract, { create = false, verify = true } = {}) {
+  const no = contract.no;
+  const expected = buildProjectFolderName(contract);
+  const ids = getFolderIds(no);
+  if (ids?.project?.id && ids.name === expected) {
+    if (!verify || await driveFolderAlive(ids.project.id)) return ids.project;
+    clearFolderIds(no);
+    _rootFoldersMemo = null;
+  }
+  const matcher = makeFolderNameMatcher(contract);
+  const roots = await listRootFolders();
+  let raw = matcher ? roots.find(f => matcher.test(f.name)) : null;
+  if (!raw && create) {
+    // 다른 사람이 방금 만들었을 수 있으니 목록을 새로 받아 한 번 더 확인
+    const fresh = await listRootFolders(true);
+    raw = matcher ? fresh.find(f => matcher.test(f.name)) : null;
+    if (!raw) {
+      raw = await driveCreateFolder(expected, DRIVE_ROOT_FOLDER_ID);
+      if (_rootFoldersMemo) _rootFoldersMemo.list.push(raw);
+    }
+  }
+  if (raw) setFolderIds(no, { name: expected, project: raw, cats: {} });
+  return raw || null;
+}
+
+// 계약 → 카테고리 폴더까지 한 번에 → { project, category } (Drive 원본 · category 는 없으면 null)
+// 카테고리 폴더 ID 를 기억하고 있으면 그 폴더만 확인 (휴지통에 간 프로젝트 폴더 안의 폴더도 휴지통 상태라
+// 카테고리만 확인해도 충분) → 다음부터는 Drive 호출 1번
+async function resolveCategoryPath(contract, catName, { create = false } = {}) {
+  const ids = getFolderIds(contract.no);
+  const catKnown = !!(ids?.name === buildProjectFolderName(contract) && ids.cats?.[catName]?.id);
+  const project = await resolveProjectFolder(contract, { create, verify: !catKnown });
+  if (!project) return { project: null, category: null };
+  const category = await resolveCategoryFolder(contract, project, catName, { create });
+  return { project, category };
+}
+
+// 프로젝트 폴더 안의 카테고리 폴더 (기억해 둔 ID 우선) · create=true 면 없을 때 만듦
+async function resolveCategoryFolder(contract, projectRaw, catName, { create = false } = {}) {
+  const no = contract.no;
+  const ids = getFolderIds(no) || { name: buildProjectFolderName(contract), project: projectRaw, cats: {} };
+  const known = ids.project?.id === projectRaw.id ? (ids.cats || {})[catName] : null;
+  if (known?.id && await driveFolderAlive(known.id)) return known;
+  const subs = await driveListFolders(projectRaw.id);
+  const cats = {};
+  subs.forEach(f => { cats[f.name.trim()] = f; });
+  let raw = cats[catName] || null;
+  if (!raw && create) { raw = await driveCreateFolder(catName, projectRaw.id); cats[catName] = raw; }
+  setFolderIds(no, { ...ids, project: projectRaw, cats });
+  return raw;
 }
 
 async function driveListLatestFile(folderId) {
@@ -413,50 +522,81 @@ async function fetchSiteFoldersFromDrive(contract, options) {
 
   await loadGoogleApis();
   await requestAccessToken();
+  if (opts.force) _rootFoldersMemo = null;   // [새로고침] 은 루트 목록도 새로
 
-  // 1) 루트 밑의 폴더 목록에서 프로젝트 폴더 매칭
-  const matcher = makeFolderNameMatcher(contract);
+  // 1) 프로젝트 폴더 — 기억해 둔 ID 가 있으면 루트 목록(수백 개)을 받지 않음
   const projectFolderNameExpected = buildProjectFolderName(contract);
-  const rootFolders = await driveListFolders(DRIVE_ROOT_FOLDER_ID);
-
-  let projectFolder = null;
-  if (matcher) {
-    const matched = rootFolders.find(f => matcher.test(f.name));
-    if (matched) projectFolder = normalizeDriveFolder(matched);
-  }
+  const emptyCats = () => SITE_CATEGORIES.reduce((acc, c) => {
+    acc[c.key] = { folder: null, latestFile: null, fileCount: 0 };
+    return acc;
+  }, {});
+  const cachedIds = getFolderIds(contractNo);
+  const usedCachedId = !!(cachedIds?.project?.id && cachedIds.name === projectFolderNameExpected);
+  let projectRaw = await resolveProjectFolder(contract, { verify: false });
 
   // 프로젝트 폴더가 없으면 → 카테고리 모두 없음
-  if (!projectFolder) {
-    const emptyCats = SITE_CATEGORIES.reduce((acc, c) => {
-      acc[c.key] = { folder: null, latestFile: null, fileCount: 0 };
-      return acc;
-    }, {});
-    const data = { projectFolder: null, projectFolderNameExpected, categories: emptyCats, error: null };
+  if (!projectRaw) {
+    const data = { projectFolder: null, projectFolderNameExpected, categories: emptyCats(), error: null };
     setFoldersCache(contractNo, data);
     return data;
   }
 
-  // 2) 프로젝트 폴더 안의 카테고리 폴더 조회
-  const subFolders = await driveListFolders(projectFolder.id);
+  // 2) 카테고리 폴더 목록 (+ 기억해 둔 ID 였다면 그 폴더가 살아 있는지 동시에 확인)
+  let [subFolders, alive] = await Promise.all([
+    driveListFolders(projectRaw.id),
+    usedCachedId ? driveFolderAlive(projectRaw.id) : Promise.resolve(true),
+  ]);
+  if (!alive) {
+    // 폴더가 지워졌거나 옮겨짐 → 기억 지우고 루트에서 다시 찾기
+    clearFolderIds(contractNo);
+    _rootFoldersMemo = null;
+    projectRaw = await resolveProjectFolder(contract, { verify: false });
+    if (!projectRaw) {
+      const data = { projectFolder: null, projectFolderNameExpected, categories: emptyCats(), error: null };
+      setFoldersCache(contractNo, data);
+      return data;
+    }
+    subFolders = await driveListFolders(projectRaw.id);
+  }
+  const projectFolder = normalizeDriveFolder(projectRaw);
   const catByName = {};
   subFolders.forEach(f => { catByName[f.name.trim()] = f; });
+  setFolderIds(contractNo, { name: projectFolderNameExpected, project: projectRaw, cats: catByName });
 
-  // 3) 각 카테고리별 최신 파일 조회 (병렬)
-  const catResults = await Promise.all(SITE_CATEGORIES.map(async (cat) => {
-    const folderRaw = catByName[cat.name] || null;
-    if (!folderRaw) return [cat.key, { folder: null, latestFile: null, fileCount: 0 }];
-    const [latestFile, fileCount] = await Promise.all([
-      driveListLatestFile(folderRaw.id).catch(() => null),
-      driveCountFiles(folderRaw.id).catch(() => 0),
-    ]);
-    return [cat.key, {
-      folder: normalizeDriveFolder(folderRaw),
-      latestFile: normalizeDriveFile(latestFile),
-      fileCount,
-    }];
-  }));
+  // 3) 모든 카테고리의 파일을 한 번에 조회 (예전: 카테고리마다 2번씩 최대 14번)
+  //    최근 수정 순으로 받아서 폴더별 첫 파일 = 최신 파일, 개수는 폴더별로 셈
+  const catFolders = SITE_CATEGORIES.map(cat => [cat, catByName[cat.name] || null]).filter(([, f]) => f);
+  const latestBy = {}, countBy = {};
+  if (catFolders.length) {
+    const parentQ = catFolders.map(([, f]) => `'${f.id}' in parents`).join(' or ');
+    let pageToken, pages = 0;
+    do {
+      const res = await window.gapi.client.drive.files.list({
+        q: `(${parentQ}) and trashed=false and mimeType != '${FOLDER_MIME}'`,
+        fields: 'nextPageToken, files(id,name,mimeType,size,modifiedTime,webViewLink,thumbnailLink,iconLink,parents)',
+        orderBy: 'modifiedTime desc',
+        pageSize: 1000,
+        pageToken,
+      });
+      (res.result.files || []).forEach(f => {
+        (f.parents || []).forEach(pid => {
+          countBy[pid] = (countBy[pid] || 0) + 1;
+          if (!latestBy[pid]) latestBy[pid] = f;
+        });
+      });
+      pageToken = res.result.nextPageToken;
+      pages++;
+    } while (pageToken && pages < 5);
+  }
 
-  const categories = catResults.reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {});
+  const categories = emptyCats();
+  catFolders.forEach(([cat, f]) => {
+    categories[cat.key] = {
+      folder: normalizeDriveFolder(f),
+      latestFile: normalizeDriveFile(latestBy[f.id] || null),
+      fileCount: countBy[f.id] || 0,
+    };
+  });
   const data = { projectFolder, projectFolderNameExpected, categories, error: null };
   setFoldersCache(contractNo, data);
   return data;
@@ -472,19 +612,17 @@ async function createProjectFolderTree(contract) {
   if (!name) throw new Error('프로젝트 폴더명을 생성할 수 없습니다 (계약일·프로젝트명 필요)');
 
   // 이미 존재하면 재사용
-  const matcher = makeFolderNameMatcher(contract);
-  const existing = (await driveListFolders(DRIVE_ROOT_FOLDER_ID)).find(f => matcher && matcher.test(f.name));
-  const projectRaw = existing || await driveCreateFolder(name, DRIVE_ROOT_FOLDER_ID);
+  const projectRaw = await resolveProjectFolder(contract, { create: true });
 
-  // 하위 5개 카테고리 생성 (이미 있는 것은 스킵)
+  // 하위 카테고리 생성 (이미 있는 것은 스킵) — 하나씩 차례로 → 동시에
   const existingSubs = await driveListFolders(projectRaw.id);
   const existingByName = {};
   existingSubs.forEach(f => { existingByName[f.name.trim()] = f; });
-
-  for (const cat of SITE_CATEGORIES) {
-    if (existingByName[cat.name]) continue;
-    await driveCreateFolder(cat.name, projectRaw.id);
-  }
+  const made = await Promise.all(SITE_CATEGORIES
+    .filter(cat => !existingByName[cat.name])
+    .map(cat => driveCreateFolder(cat.name, projectRaw.id)));
+  made.forEach(f => { if (f?.name) existingByName[f.name.trim()] = f; });
+  setFolderIds(contract.no, { name, project: projectRaw, cats: existingByName });
 
   invalidateFoldersCache(contract.no);
   return normalizeDriveFolder(projectRaw);
@@ -497,8 +635,9 @@ async function createCategoryFolder(contract, category, projectFolderId) {
   await requestAccessToken();
 
   // 중복 방지
-  const existing = (await driveListFolders(projectFolderId)).find(f => f.name.trim() === category.name);
-  const raw = existing || await driveCreateFolder(category.name, projectFolderId);
+  const projectRaw = { id: projectFolderId };
+  const ids = getFolderIds(contract.no);
+  const raw = await resolveCategoryFolder(contract, ids?.project?.id === projectFolderId ? ids.project : projectRaw, category.name, { create: true });
   invalidateFoldersCache(contract.no);
   return normalizeDriveFolder(raw);
 }
@@ -524,32 +663,20 @@ async function uploadFileToDrive(blob, filename, parentId, mimeTypeOverride) {
 
   const mimeType = mimeTypeOverride || blob.type || 'application/octet-stream';
   const metadata = { name: filename, parents: [parentId], mimeType };
-  const boundary = '-------314159265358979323846-hbdash';
+  const boundary = '-------hbdash-' + Date.now().toString(36) + Math.random().toString(36).slice(2);   // 파일 내용과 겹치지 않도록 매번 다르게
   const delimiter = '\r\n--' + boundary + '\r\n';
   const closeDelim = '\r\n--' + boundary + '--';
 
-  // FileReader 로 base64 인코딩 (multipart 안전)
-  const base64 = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const s = reader.result || '';
-      // dataURL "data:*;base64,XXXX"
-      const comma = s.indexOf(',');
-      resolve(comma >= 0 ? s.slice(comma + 1) : s);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-
-  const body =
+  // (속도) 파일을 base64 로 바꾸지 않고 그대로 보냄 — 변환 시간이 없고 전송량도 약 25% 적음
+  const body = new Blob([
     delimiter +
     'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
     JSON.stringify(metadata) +
     delimiter +
-    'Content-Type: ' + mimeType + '\r\n' +
-    'Content-Transfer-Encoding: base64\r\n\r\n' +
-    base64 +
-    closeDelim;
+    'Content-Type: ' + mimeType + '\r\n\r\n',
+    blob,
+    closeDelim,
+  ]);
 
   const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType,size,modifiedTime';
   const res = await fetch(url, {
@@ -580,21 +707,8 @@ async function findOrCreateCategoryFolder(contract, categoryKey) {
   const category = SITE_CATEGORIES.find(c => c.key === categoryKey);
   if (!category) throw new Error('알 수 없는 카테고리: ' + categoryKey);
 
-  // 프로젝트 폴더 찾기 또는 생성
-  const matcher = makeFolderNameMatcher(contract);
-  const projectFolderName = buildProjectFolderName(contract);
-  let rootFolders = await driveListFolders(DRIVE_ROOT_FOLDER_ID);
-  let projectFolder = matcher ? rootFolders.find(f => matcher.test(f.name)) : null;
-  if (!projectFolder) {
-    projectFolder = await driveCreateFolder(projectFolderName, DRIVE_ROOT_FOLDER_ID);
-  }
-
-  // 카테고리 폴더 찾기 또는 생성
-  let catFolders = await driveListFolders(projectFolder.id);
-  let catFolder = catFolders.find(f => f.name.trim() === category.name);
-  if (!catFolder) {
-    catFolder = await driveCreateFolder(category.name, projectFolder.id);
-  }
+  // 프로젝트 폴더 · 카테고리 폴더 찾기 또는 생성 (기억해 둔 ID 우선)
+  const { project: projectFolder, category: catFolder } = await resolveCategoryPath(contract, category.name, { create: true });
 
   return { project: normalizeDriveFolder(projectFolder), category: normalizeDriveFolder(catFolder) };
 }
@@ -620,21 +734,8 @@ async function uploadExpenseReceipts(contract, roundNo, docDate, files) {
   await loadGoogleApis();
   await requestAccessToken();
 
-  // 프로젝트 폴더 → 증빙/ → N차_docDate/ 3단계 확보
-  const matcher = makeFolderNameMatcher(contract);
-  const projectFolderName = buildProjectFolderName(contract);
-  const rootFolders = await driveListFolders(DRIVE_ROOT_FOLDER_ID);
-  let projectFolder = matcher ? rootFolders.find(f => matcher.test(f.name)) : null;
-  if (!projectFolder) {
-    projectFolder = await driveCreateFolder(projectFolderName, DRIVE_ROOT_FOLDER_ID);
-  }
-
-  // 증빙/
-  const catFolders = await driveListFolders(projectFolder.id);
-  let receiptsFolder = catFolders.find(f => f.name.trim() === '증빙');
-  if (!receiptsFolder) {
-    receiptsFolder = await driveCreateFolder('증빙', projectFolder.id);
-  }
+  // 프로젝트 폴더 → 증빙/ → N차_docDate/ 3단계 확보 (앞의 두 단계는 기억해 둔 ID 우선)
+  const { category: receiptsFolder } = await resolveCategoryPath(contract, '증빙', { create: true });
 
   // N차_YYYY-MM-DD/
   const roundFolderName = `${roundNo}차_${docDate}`;
@@ -667,12 +768,7 @@ async function uploadExpenseReceipts(contract, roundNo, docDate, files) {
 async function listExpenseHistoryFromDrive(contract) {
   await loadGoogleApis();
   await requestAccessToken();
-  const matcher = makeFolderNameMatcher(contract);
-  const rootFolders = await driveListFolders(DRIVE_ROOT_FOLDER_ID);
-  const projectFolder = matcher ? rootFolders.find(f => matcher.test(f.name)) : null;
-  if (!projectFolder) return [];
-  const catFolders = await driveListFolders(projectFolder.id);
-  const expenseFolder = catFolders.find(f => f.name.trim() === '지출품의서');
+  const { category: expenseFolder } = await resolveCategoryPath(contract, '지출품의서');
   if (!expenseFolder) return [];
 
   // 파일 목록 조회
@@ -709,6 +805,7 @@ Object.assign(window, {
   createDriveFolder,
   findOrCreateCategoryFolder,
   invalidateFoldersCache,
+  peekFoldersCache,
   // 🆕 파일 업로드
   uploadFileToDrive,
   uploadFileToCategory,
