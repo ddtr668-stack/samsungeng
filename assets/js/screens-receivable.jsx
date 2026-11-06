@@ -85,18 +85,28 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
   const totalContract = filtered.reduce((s,c) => s+c.totalAmount, 0);
 
   // 부문별 미수 요약
-  const byCategory = useMemo(() => {
+  const groupByCategory = (list) => {
     const acc = {};
-    receivables.forEach(c => {
+    list.forEach(c => {
       if (!acc[c.category]) acc[c.category] = { name:c.category, count:0, balance:0, total:0 };
       acc[c.category].count++;
       acc[c.category].balance += c.balance;
       acc[c.category].total += c.totalAmount;
     });
     return Object.values(acc).sort((a,b) => b.balance - a.balance);
-  }, [receivables]);
-
-  const maxCatBal = Math.max(...byCategory.map(c => c.balance));
+  };
+  // 아래 구분 칩(전체·민수…)은 전체 미수 기준 — 칩을 눌러도 다른 칩이 사라지지 않도록
+  const byCategory = useMemo(() => groupByCategory(receivables), [receivables]);
+  // 위 요약 카드 2개는 필터 결과 기준 (예전: 필터를 걸어도 전체 미수로 고정)
+  const byCategoryView = useMemo(() => groupByCategory(filtered), [filtered]);
+  const maxCatBal = Math.max(1, ...byCategoryView.map(c => c.balance));
+  const sumBalance = filtered.reduce((s,c) => s + c.balance, 0);
+  const sumPaid = filtered.reduce((s,c) => s + (c.paidAmount || 0), 0);
+  // 수금률: 필터가 없으면 예전처럼 전체 계약(다 받은 계약 포함) 대비, 필터가 있으면 걸러진 미수 계약 대비
+  const rateBase = hasActiveFilter
+    ? { paid: sumPaid, total: totalContract }
+    : { paid: data.summary.paidAmount, total: data.summary.totalAmount };
+  const paidRate = rateBase.total > 0 ? rateBase.paid / rateBase.total : 0;
 
   // ─── 인쇄: 화면 그대로 A4 가로 (v3.35) ───
   // 화면 표는 12건씩 나눠 보이지만, 인쇄에는 지금 필터에 맞는 미수금 전체 + 합계 줄
@@ -153,9 +163,12 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
       {/* 상단 요약 */}
       <div className="row-2">
         <div className="card">
-          <CardHead title="부문별 미수 잔금" sub="즉시 관리가 필요한 부문 순"/>
+          <CardHead title="부문별 미수 잔금" sub={hasActiveFilter ? `필터 결과 ${filtered.length}건 기준 · 잔금 많은 부문 순` : '즉시 관리가 필요한 부문 순'}/>
           <div className="bars">
-            {byCategory.map(c => (
+            {byCategoryView.length === 0 && (
+              <div style={{fontSize:12.5,color:'var(--ink-3)',padding:'18px 0'}}>조건에 맞는 미수금이 없습니다.</div>
+            )}
+            {byCategoryView.map(c => (
               <div key={c.name} className="bar-row">
                 <div className="b-top">
                   <span className="b-label"><CatTag cat={c.name}/> <span style={{color:'var(--ink-3)',fontWeight:500,marginLeft:6}}>{c.count}건 · 계약금 대비 {fmtPct(c.balance/c.total)}</span></span>
@@ -168,35 +181,35 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
         </div>
 
         <div className="card">
-          <CardHead title="수금 진행 요약"/>
+          <CardHead title="수금 진행 요약" sub={hasActiveFilter ? `필터 결과 ${filtered.length}건 기준` : undefined}/>
           <div style={{display:'flex',flexDirection:'column',gap:14}}>
             <div>
-              <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600,letterSpacing:'0.03em'}}>전체 계약 대비 수금률</div>
+              <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600,letterSpacing:'0.03em'}}>{hasActiveFilter ? '조건에 맞는 미수 계약 수금률' : '전체 계약 대비 수금률'}</div>
               <div style={{display:'flex',alignItems:'baseline',gap:6,marginTop:4}}>
-                <div style={{fontSize:26,fontWeight:800,letterSpacing:'-0.03em',color:'var(--green-800)'}} className="tnum">{fmtPct(data.summary.paidAmount / data.summary.totalAmount)}</div>
-                <div style={{fontSize:12,color:'var(--ink-3)'}}>({fmtKRW억(data.summary.paidAmount)} / {fmtKRW억(data.summary.totalAmount)})</div>
+                <div style={{fontSize:26,fontWeight:800,letterSpacing:'-0.03em',color:'var(--green-800)'}} className="tnum">{fmtPct(paidRate)}</div>
+                <div style={{fontSize:12,color:'var(--ink-3)'}}>({fmtKRW억(rateBase.paid)} / {fmtKRW억(rateBase.total)})</div>
               </div>
               <div className="pbar" style={{marginTop:8}}>
-                <div className="pfill" style={{width: (data.summary.paidAmount / data.summary.totalAmount * 100) + '%'}}/>
+                <div className="pfill" style={{width: (paidRate * 100) + '%'}}/>
               </div>
             </div>
 
             <div style={{borderTop:'1px solid var(--line)',paddingTop:14,display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
               <div>
                 <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>미수 계약</div>
-                <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{receivables.length}<span style={{fontSize:12,color:'var(--ink-3)',marginLeft:2}}>건</span></div>
+                <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{filtered.length}<span style={{fontSize:12,color:'var(--ink-3)',marginLeft:2}}>건</span></div>
               </div>
               <div>
                 <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>평균 미수액</div>
-                <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{fmtKRW억(receivables.reduce((s,c)=>s+c.balance,0) / (receivables.length || 1))}</div>
+                <div style={{fontSize:18,fontWeight:800,color:'var(--ink-1)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{fmtKRW억(sumBalance / (filtered.length || 1))}</div>
               </div>
               <div>
                 <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>1억+ 미수</div>
-                <div style={{fontSize:18,fontWeight:800,color:'var(--danger)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{receivables.filter(c => c.balance >= 1e8).length}<span style={{fontSize:12,color:'var(--ink-3)',marginLeft:2}}>건</span></div>
+                <div style={{fontSize:18,fontWeight:800,color:'var(--danger)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{filtered.filter(c => c.balance >= 1e8).length}<span style={{fontSize:12,color:'var(--ink-3)',marginLeft:2}}>건</span></div>
               </div>
               <div>
                 <div style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>최대 미수</div>
-                <div style={{fontSize:18,fontWeight:800,color:'var(--danger)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{fmtKRW억(Math.max(...receivables.map(c=>c.balance)))}</div>
+                <div style={{fontSize:18,fontWeight:800,color:'var(--danger)',marginTop:3,letterSpacing:'-0.02em'}} className="tnum">{fmtKRW억(filtered.length ? Math.max(...filtered.map(c=>c.balance)) : 0)}</div>
               </div>
             </div>
           </div>
