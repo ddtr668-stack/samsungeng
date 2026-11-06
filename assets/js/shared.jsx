@@ -3,6 +3,122 @@
 ═══════════════════════════════════════════════════════════════ */
 const { useState, useEffect, useMemo, useRef, useCallback, Fragment } = React;
 
+// ═══════════════════════════════════════════════════════════════
+// 뒤로가기 관리 (v3.33)
+// 예전: 화면 이동·모달이 브라우저 방문 기록에 남지 않아 뒤로가기 = 사이트 나감
+// 지금: 화면 이동과 모달 열기를 방문 기록에 남김
+//   - 모달이 열려 있으면 뒤로가기 → 맨 위 모달만 닫힘
+//   - 계약 상세 → 뒤로가기 → 직전 화면(목록 등)
+//   - 대시보드에서 뒤로가기 → "한 번 더 누르면 나갑니다" 안내, 2초 안에 한 번 더 누르면 나감
+// 방문 기록 항목: { hb:'root' } 맨 밑 · { hb:'route', route } 화면 · { hb:'overlay', id } 모달
+// ═══════════════════════════════════════════════════════════════
+const hbHistory = (() => {
+  const overlays = [];          // 열린 모달 { id, close, released, popped } — 마지막이 맨 위
+  const routeListeners = new Set();
+  let expectPop = 0;            // 코드가 직접 부른 history.back() — popstate 를 무시할 횟수
+  let pending = [];             // history.back() 이 끝난 뒤 넣을 기록 (그 사이에 넣으면 back 이 새 기록을 지움)
+  let seq = 0;
+  let lastExitTry = 0;
+  let onExitHint = null;
+  const same = (a, b) => JSON.stringify(a || {}) === JSON.stringify(b || {});
+  const st = () => window.history.state || {};
+  const push = (state) => { try { window.history.pushState(state, ''); } catch {} };
+
+  const safePush = (state) => { if (expectPop > 0) pending.push(state); else push(state); };
+  const flushPending = () => {
+    if (expectPop > 0) return;
+    const list = pending; pending = [];
+    list.forEach(state => {
+      if (state.hb === 'route' && st().hb === 'route' && same(st().route, state.route)) return;
+      push(state);
+    });
+  };
+
+  window.addEventListener('popstate', () => {
+    const s = st();
+    if (expectPop > 0) { expectPop--; flushPending(); return; }
+    // 1) 모달이 열려 있으면 맨 위 모달만 닫음 (화면은 그대로)
+    if (overlays.length) {
+      const top = overlays.pop();
+      top.popped = true;
+      try { top.close(); } catch {}
+      // 닫기를 거부한 모달(저장 중 등)은 다시 보호
+      setTimeout(() => {
+        if (!top.released) { overlays.push(top); top.popped = false; safePush({ hb:'overlay', id: top.id }); }
+      }, 60);
+      return;                              // 화면은 그대로
+    }
+    // 2) 이미 닫힌 모달의 남은 기록 → 한 칸 더 뒤로 (사용자에게는 안 보임)
+    if (s.hb === 'overlay') { window.history.back(); return; }
+    // 3) 맨 밑 기록 → 나가기 확인
+    if (s.hb === 'root') {
+      if (Date.now() - lastExitTry < 2000) { window.history.back(); return; }
+      lastExitTry = Date.now();
+      push({ hb:'route', route: { screen:'dashboard' } });
+      routeListeners.forEach(fn => fn({ screen:'dashboard' }));
+      onExitHint?.();
+      return;
+    }
+    // 4) 화면 기록 → 그 화면으로
+    if (s.hb === 'route' && s.route) routeListeners.forEach(fn => fn(s.route));
+  });
+
+  return {
+    // 앱 시작 시 한 번: 새로고침이면 기존 기록을 그대로 쓰고, 처음 열었으면 맨 밑 + 대시보드 + 현재 화면
+    init(route) {
+      const s = st();
+      if (s.hb === 'route' && s.route) return s.route;
+      if (s.hb === 'overlay') { window.history.back(); return route; }   // 모달 열린 채 새로고침
+      try { window.history.replaceState({ hb:'root' }, ''); } catch {}
+      push({ hb:'route', route: { screen:'dashboard' } });
+      if (route && route.screen !== 'dashboard') push({ hb:'route', route });
+      return route;
+    },
+    // 화면 이동 (메뉴·계약 클릭) — 같은 화면이면 기록 안 남김
+    pushRoute(route) {
+      if (expectPop === 0 && st().hb === 'route' && same(st().route, route)) return;
+      safePush({ hb:'route', route });   // 모달 닫는 중이면 끝난 뒤에
+    },
+    // 기록을 늘리지 않고 현재 화면만 바꿈 (로그인 직후 등)
+    replaceRoute(route) {
+      if (st().hb === 'route') { try { window.history.replaceState({ hb:'route', route }, ''); } catch {} }
+      else push({ hb:'route', route });
+    },
+    onRoute(fn) { routeListeners.add(fn); return () => routeListeners.delete(fn); },
+    onExitHint(fn) { onExitHint = fn; },
+    // 모달 열림 등록 → 닫힐 때 호출할 함수를 돌려줌
+    openOverlay(close) {
+      const entry = { id: 'ov' + (++seq) + '-' + Date.now().toString(36), close, released: false, popped: false };
+      overlays.push(entry);
+      const state = { hb:'overlay', id: entry.id };
+      safePush(state);
+      return () => {
+        if (entry.released) return;
+        entry.released = true;
+        const i = overlays.indexOf(entry);
+        if (i >= 0) overlays.splice(i, 1);
+        // 아직 기록에 넣기 전(대기 중)이면 대기열에서만 빼면 됨
+        const k = pending.indexOf(state);
+        if (k >= 0) { pending.splice(k, 1); return; }
+        // X·저장·Esc 로 닫혔으면 이 모달의 기록을 지움 (뒤로가기로 닫혔으면 이미 지워짐)
+        if (!entry.popped && st().hb === 'overlay' && st().id === entry.id) {
+          expectPop++;
+          window.history.back();
+        }
+      };
+    },
+  };
+})();
+
+// 모달 안에 넣어 두면: 열려 있는 동안 뒤로가기 = 이 모달 닫기
+// <BackClose onClose={onClose}/> — 모달이 화면에 있을 때만 렌더되는 위치에 둘 것
+const BackClose = ({ onClose }) => {
+  const ref = useRef(onClose);
+  ref.current = onClose;
+  useEffect(() => hbHistory.openOverlay(() => ref.current && ref.current()), []);
+  return null;
+};
+
 // 모달 바깥(배경) 클릭 시 닫기 — 입력칸에서 드래그해 배경에서 마우스를 떼도 닫히지 않도록
 // 누른 곳과 뗀 곳이 모두 배경일 때만 닫음
 function backdropClose(onClose) {
@@ -503,7 +619,7 @@ const CardHead = ({ title, sub, right }) => (
 
 // Global export
 Object.assign(window, {
-  backdropClose,
+  backdropClose, hbHistory, BackClose,
   useState, useEffect, useMemo, useRef, useCallback, Fragment,
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,
   Icon, Sidebar, Topbar, usePagination, Pager,

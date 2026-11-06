@@ -100,13 +100,79 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
   const monthly = data.monthlyStats;
   const topBal = data.topBalance.slice(0, 5);
 
+  // ─── 인쇄: 대시보드 화면 그대로 (v3.33) ───
+  // 대시보드가 열려 있는 동안 body 에 print-dash → [인쇄] 버튼이든 Ctrl+P 든 같은 양식 (app.css 참고)
+  useEffect(() => {
+    document.body.classList.add('print-dash');
+    return () => document.body.classList.remove('print-dash');
+  }, []);
+  const periodLabel = (() => {
+    const f = (ym) => ym ? ym.replace('-', '.') : '';
+    if (!range.from && !range.to) return '전체 기간';
+    return `${f(range.from || dataMinYm) || '—'} – ${f(range.to || dataMaxYm) || '—'}`;
+  })();
+  const printDashboard = () => {
+    const prev = document.title;
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    // PDF 로 저장할 때 파일 이름
+    document.title = `대시보드_${selManager === 'all' ? '전체' : selManager}_${ymd}`;
+    const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore); };
+    window.addEventListener('afterprint', restore);
+    window.print();
+  };
+
+  // ─── 세금계산서 발행 처리 (v3.33) ───
+  // 실제 전자세금계산서 발행(홈택스 등)은 이 사이트와 연동되어 있지 않으므로,
+  // 버튼은 "발행 완료로 기록": 미발행 금액을 발행 금액으로 옮김 (발행액 += 미발행액, 미발행액 = 0)
+  const toast = typeof useToast === 'function' ? useToast() : null;
+  const [issuing, setIssuing] = useState({});        // { 계약no: true } 처리 중
+  const [issuedNow, setIssuedNow] = useState({});    // 방금 처리한 계약 { no: 처리한 미발행액 } — 화면 갱신 전 깜빡임 방지
+  const justIssued = (c) => issuedNow[c.no] != null && issuedNow[c.no] === (Number(c.taxInvoicePending) || 0);
+  const editable = typeof canEdit !== 'function' || canEdit();
+  const issueOne = async (c) => {
+    const pending = Number(c.taxInvoicePending) || 0;
+    await apiClient.updateContract(c.no, {
+      taxInvoiceIssued: (Number(c.taxInvoiceIssued) || 0) + pending,
+      taxInvoicePending: 0,
+    });
+  };
+  const issueTax = async (list) => {
+    if (!editable) { toast?.('보기 전용 계정은 발행 처리를 할 수 없습니다.', 'error'); return; }
+    list = list.filter(c => !issuing[c.no] && !justIssued(c));
+    if (!list.length) return;
+    const total = list.reduce((s, c) => s + (Number(c.taxInvoicePending) || 0), 0);
+    const msg = list.length === 1
+      ? `[${list[0].projectName || '계약'}]\n미발행 ${fmtKRW(total)}원을 발행 완료로 기록할까요?\n\n※ 실제 세금계산서는 홈택스 등에서 따로 발행해야 합니다.`
+      : `미발행 계약 ${list.length}건 · 합계 ${fmtKRW(total)}원을 모두 발행 완료로 기록할까요?\n\n※ 실제 세금계산서는 홈택스 등에서 따로 발행해야 합니다.`;
+    if (!window.confirm(msg)) return;
+    setIssuing(m => { const n = { ...m }; list.forEach(c => { n[c.no] = true; }); return n; });
+    const failed = [];
+    const queue = [...list];
+    const worker = async () => {
+      while (queue.length) {
+        const c = queue.shift();
+        try { await issueOne(c); setIssuedNow(m => ({ ...m, [c.no]: Number(c.taxInvoicePending) || 0 })); }
+        catch (e) { failed.push(`${c.projectName || '#' + c.no}: ${e.message || e}`); }
+        finally { setIssuing(m => { const n = { ...m }; delete n[c.no]; return n; }); }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    const ok = list.length - failed.length;
+    if (ok) toast?.(`세금계산서 ${ok}건 발행 완료로 기록했습니다.`, 'success');
+    if (failed.length) toast?.(`발행 처리 실패 ${failed.length}건 — ${failed[0]}`, 'error');
+  };
+
   // 다가오는 세금계산서 미발행 계약 (세금계산서 미발행 > 0)
   const upcomingTax = useMemo(() => {
     return data.contracts
-      .filter(c => c.taxInvoicePending > 0)
+      .filter(c => c.taxInvoicePending > 0 && !justIssued(c))
       .sort((a,b) => b.taxInvoicePending - a.taxInvoicePending)
       .slice(0, 4);
-  }, [data]);
+  }, [data, issuedNow]);
+  const allPendingTax = useMemo(
+    () => data.contracts.filter(c => c.taxInvoicePending > 0 && !justIssued(c)),
+    [data, issuedNow]);
 
   // 최근 6개월 트렌드
   const [trendSpan, setTrendSpan] = useState('12');   // '6' | '12' | 'all'
@@ -140,6 +206,11 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
 
   return (
     <>
+      {/* 인쇄할 때만 보이는 머리줄 */}
+      <div className="print-head">
+        <span>{typeof getSheetName === 'function' ? getSheetName() : '계약관리'} · 담당 {selManager === 'all' ? '전체' : selManager} · 기간 {periodLabel}</span>
+        <span>출력 {(() => { const d = new Date(); const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}.${p(d.getMonth()+1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; })()}</span>
+      </div>
       <div className="page-head">
         <div>
           <h1>{selManager === 'all' ? <><span className="hl">종합 경영</span> 대시보드</> : <><span className="hl">{selManager}</span> 담당 대시보드</>}</h1>
@@ -155,6 +226,10 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
               {managers.map(m => <option key={m} value={m}>{m} 담당</option>)}
             </select>
           )}
+          <button className="btn-ghost" onClick={printDashboard} title="지금 화면 그대로 A4 가로로 인쇄 · 인쇄 창에서 'PDF로 저장'을 고르면 PDF 파일">
+            <Icon name="print" size={14}/>
+            인쇄 · PDF
+          </button>
           <button className="btn-ghost" onClick={exportCsv} title="지금 보이는 조건의 계약 목록을 엑셀(CSV)로 저장">
             <Icon name="download" size={14}/>
             엑셀 내보내기
@@ -467,8 +542,15 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
         <div className="card">
           <CardHead
             title="세금계산서 미발행 계약"
-            sub={`총 ${data.contracts.filter(c=>c.taxInvoicePending>0).length}건 · 즉시 발행 대상`}
-            right={<button className="btn-ghost" style={{height:32,fontSize:12,padding:'0 12px'}}>일괄 발행</button>}
+            sub={`총 ${allPendingTax.length}건 · 즉시 발행 대상`}
+            right={editable && allPendingTax.length > 0 && (
+              <button className="btn-ghost" style={{height:32,fontSize:12,padding:'0 12px'}}
+                disabled={Object.keys(issuing).length > 0}
+                title="미발행 계약 전체를 발행 완료로 기록"
+                onClick={() => issueTax(allPendingTax)}>
+                {Object.keys(issuing).length > 0 ? '처리 중…' : '일괄 발행'}
+              </button>
+            )}
           />
           <table className="tbl">
             <thead>
@@ -476,10 +558,13 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
                 <th>프로젝트</th>
                 <th>거래처</th>
                 <th className="right">미발행 금액</th>
-                <th className="center">액션</th>
+                <th className="center no-print">액션</th>
               </tr>
             </thead>
             <tbody>
+              {upcomingTax.length === 0 && (
+                <tr><td colSpan={4} style={{textAlign:'center',padding:'28px 0',color:'var(--ink-3)',fontSize:12.5}}>미발행 계약이 없습니다.</td></tr>
+              )}
               {upcomingTax.map(c => (
                 <tr key={(c.id ?? c.no) + '-tax'} className="clickable" onClick={() => onSelectContract(c.id ?? c.no)}>
                   <td>
@@ -490,9 +575,15 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
                   </td>
                   <td style={{fontSize:12.5,color:'var(--ink-2)'}}>{c.client}</td>
                   <td className="right amt tnum" style={{color:'var(--warn)'}}>{fmtKRW(c.taxInvoicePending)}<span className="krw">원</span></td>
-                  <td className="center">
+                  <td className="center no-print">
                     <div className="row-act" style={{display:'inline-flex'}}>
-                      <button className="pri" onClick={(e)=>e.stopPropagation()}>발행</button>
+                      {editable ? (
+                        <button className="pri" disabled={!!issuing[c.no]}
+                          title="발행 완료로 기록 (미발행 금액 → 발행 금액)"
+                          onClick={(e) => { e.stopPropagation(); issueTax([c]); }}>
+                          {issuing[c.no] ? '처리 중' : '발행'}
+                        </button>
+                      ) : <span style={{fontSize:11.5,color:'var(--ink-3)'}}>—</span>}
                     </div>
                   </td>
                 </tr>

@@ -25,9 +25,24 @@ const App = () => {
   // 관리자: 가입·승인된 담당자 이름 (계약이 아직 없는 사람도 담당자 목록에 표시)
   const [userNames, setUserNames] = useState([]);   // 자동 로그아웃까지 남은 초 (경고 표시용)
   const [route, setRoute] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
-    catch { return { screen:'dashboard' }; }
+    let r;
+    try { r = JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
+    catch { r = { screen:'dashboard' }; }
+    // 뒤로가기 기록 준비 (새로고침이면 기존 기록의 화면을 그대로)
+    return window.hbHistory ? window.hbHistory.init(r) : r;
   });
+  // 화면 이동 = 화면 바꾸기 + 뒤로가기 기록 남기기
+  const go = useCallback((r) => { setRoute(r); window.hbHistory?.pushRoute(r); }, []);
+  // 기록을 늘리지 않고 화면만 바꿈 (로그인 직후 · 첫 설정 화면)
+  const goReplace = useCallback((r) => { setRoute(r); window.hbHistory?.replaceRoute(r); }, []);
+  const [exitHint, setExitHint] = useState(false);
+  useEffect(() => {
+    if (!window.hbHistory) return;
+    const off = window.hbHistory.onRoute((r) => { setRoute(r); setNavOpen(false); window.scrollTo(0, 0); });
+    let t;
+    window.hbHistory.onExitHint(() => { setExitHint(true); clearTimeout(t); t = setTimeout(() => setExitHint(false), 2000); });
+    return () => { off(); clearTimeout(t); window.hbHistory.onExitHint(null); };
+  }, []);
   const [globalSearch, setGlobalSearch] = useState('');
   const [newContractOpen, setNewContractOpen] = useState(false);
   const [expenseContract, setExpenseContract] = useState(null);
@@ -79,7 +94,7 @@ const App = () => {
       setData(res.data);
       setError(null);
       // 데이터가 없으면 API 연결부터 하도록 설정 화면으로 이동
-      if (res.source === 'empty') setRoute({ screen:'settings' });
+      if (res.source === 'empty') goReplace({ screen:'settings' });
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -204,20 +219,20 @@ const App = () => {
   const [navOpen, setNavOpen] = useState(false);   // 모바일: ☰ 로 여는 사이드바
   const nav = useCallback((screen) => {
     setNavOpen(false);
-    setRoute({ screen });
+    go({ screen });
     setGlobalSearch('');
     window.scrollTo(0, 0);
   }, []);
 
   const selectContract = useCallback((no) => {
-    setRoute({ screen:'detail', contractNo:no });
+    go({ screen:'detail', contractNo:no });
     window.scrollTo(0, 0);
-  }, []);
+  }, [go]);
 
   const handleGlobalSearch = useCallback((val) => {
     setGlobalSearch(val);
     if (val && route.screen !== 'contracts') {
-      setRoute({ screen:'contracts' });
+      go({ screen:'contracts' });
     }
   }, [route.screen]);
 
@@ -230,12 +245,12 @@ const App = () => {
       const id = d.contracts.reduce((m, c) => Math.max(m, Number(c.id) || 0), 0) + 1;
       return exists ? d : { ...d, contracts: [...d.contracts, { checkDates: {}, ...contract, id }] };
     });
-    setRoute({ screen:'detail', contractNo: contract.no });
+    go({ screen:'detail', contractNo: contract.no });
     softRefresh();
-  }, [softRefresh]);
+  }, [softRefresh, go]);
 
   if (loading) return <div className="boot">불러오는 중…</div>;
-  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLastActivity(Date.now()); setLoginNotice(''); setRoute({ screen:'dashboard' }); load(); }}/>;
+  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLastActivity(Date.now()); setLoginNotice(''); goReplace({ screen:'dashboard' }); load(); }}/>;
   if (error && !data) return (
     <div style={{padding:40,fontSize:14,color:'var(--ink-2)'}}>
       <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>데이터 로드 실패</div>
@@ -302,6 +317,15 @@ const App = () => {
           </button>
         </div>
       )}
+      {exitHint && (
+        <div className="no-print" role="status"
+          style={{position:'fixed',left:'50%',bottom:28,transform:'translateX(-50%)',zIndex:10001,
+            background:'rgba(20,24,22,.88)',color:'#fff',borderRadius:999,padding:'9px 16px',
+            fontSize:13,boxShadow:'0 8px 24px rgba(0,0,0,.2)',whiteSpace:'nowrap'}}>
+          뒤로 버튼을 한 번 더 누르면 사이트를 나갑니다
+        </div>
+      )}
+      {navOpen && <BackClose onClose={() => setNavOpen(false)}/>}
       <div className={'app' + (navOpen ? ' nav-open' : '')}>
         <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}
           managers={managerStats} activeManager={activeManager} onPickManager={(m) => { setNavOpen(false); setViewManager(m); }}/>

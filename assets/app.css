@@ -790,6 +790,7 @@ button.check:disabled{cursor:wait;opacity:.7}
 
   /* 완전 숨김 */
   .no-print,
+  .toast-wrap,
   .sidebar,
   aside,
   .topbar,
@@ -840,9 +841,10 @@ button.check:disabled{cursor:wait;opacity:.7}
   }
   .detail-head .meta span { display: inline-block !important; }
 
+  /* 아래 규칙은 계약 상세 등 인쇄용 — 대시보드(print-dash)는 화면 그대로 양식을 따로 씀 */
   /* KPI 그리드: 강제로 4열 flex (grid보다 flex가 강력) */
-  .kpis,
-  .kpi-row {
+  body:not(.print-dash) .kpis,
+  body:not(.print-dash) .kpi-row {
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: nowrap !important;
@@ -854,8 +856,8 @@ button.check:disabled{cursor:wait;opacity:.7}
     break-inside: avoid !important;
     page-break-inside: avoid !important;
   }
-  .kpi,
-  .kpi.tight {
+  body:not(.print-dash) .kpi,
+  body:not(.print-dash) .kpi.tight {
     flex: 1 1 0 !important;
     width: 0 !important;                  /* flex-basis 0 → 균등 분배 */
     min-width: 0 !important;              /* flex overflow 방지 핵심! */
@@ -867,9 +869,9 @@ button.check:disabled{cursor:wait;opacity:.7}
     overflow: hidden !important;
     display: block !important;
   }
-  .kpi::before,
-  .kpi.accent::before { display: none !important; }
-  .kpi .label {
+  body:not(.print-dash) .kpi::before,
+  body:not(.print-dash) .kpi.accent::before { display: none !important; }
+  body:not(.print-dash) .kpi .label {
     font-size: 7.5pt !important;
     color: #555 !important;
     font-weight: 600 !important;
@@ -880,12 +882,12 @@ button.check:disabled{cursor:wait;opacity:.7}
     letter-spacing: -0.02em !important;
     gap: 4px !important;
   }
-  .kpi .label .kdot {
+  body:not(.print-dash) .kpi .label .kdot {
     width: 5px !important;
     height: 5px !important;
     flex-shrink: 0 !important;
   }
-  .kpi .val {
+  body:not(.print-dash) .kpi .val {
     font-size: 11pt !important;
     font-weight: 800 !important;
     line-height: 1.1 !important;
@@ -896,13 +898,13 @@ button.check:disabled{cursor:wait;opacity:.7}
     color: #000 !important;
     letter-spacing: -0.03em !important;
   }
-  .kpi .val .unit {
+  body:not(.print-dash) .kpi .val .unit {
     font-size: 7pt !important;
     font-weight: 600 !important;
     margin-left: 1px !important;
     color: #555 !important;
   }
-  .kpi > div:last-child {
+  body:not(.print-dash) .kpi > div:last-child {
     font-size: 7pt !important;
     color: #666 !important;
     margin: 3px 0 0 0 !important;
@@ -913,7 +915,7 @@ button.check:disabled{cursor:wait;opacity:.7}
   }
 
   /* 카드 */
-  .card {
+  body:not(.print-dash) .card {
     border: 1px solid #bbb !important;
     padding: 8px 10px !important;
     margin: 0 0 6px 0 !important;
@@ -924,52 +926,94 @@ button.check:disabled{cursor:wait;opacity:.7}
   }
 
   /* 2컬럼 그리드 유지 */
-  .row-2 {
+  body:not(.print-dash) .row-2 {
     display: grid !important;
     grid-template-columns: 1.6fr 1fr !important;
     gap: 6px !important;
     margin-bottom: 6px !important;
   }
-  .detail-body {
+  body:not(.print-dash) .detail-body {
     display: grid !important;
     grid-template-columns: 1.4fr 1fr !important;
     gap: 6px !important;
   }
 
   /* 공사 진행률 바 */
-  .checks {
+  body:not(.print-dash) .checks {
     display: grid !important;
     grid-template-columns: repeat(5, 1fr) !important;
     gap: 4px !important;
   }
-  .checks .check-node,
-  .checks > * {
+  body:not(.print-dash) .checks .check-node,
+  body:not(.print-dash) .checks > * {
     padding: 4px !important;
     font-size: 8pt !important;
   }
 
   /* 타이포 축소 */
-  h1 { font-size: 16pt !important; }
-  h2 { font-size: 12pt !important; }
-  h3 { font-size: 10pt !important; }
+  body:not(.print-dash) h1 { font-size: 16pt !important; }
+  body:not(.print-dash) h2 { font-size: 12pt !important; }
+  body:not(.print-dash) h3 { font-size: 10pt !important; }
 
   /* 링크 밑줄 제거 */
-  a { color: inherit !important; text-decoration: none !important; }
+  body:not(.print-dash) a { color: inherit !important; text-decoration: none !important; }
 
   /* 백 버튼 등 완전 숨김 재확인 */
-  .kpi.accent {
+  body:not(.print-dash) .kpi.accent {
     background: white !important;
     color: #000 !important;
     border: 1px solid #666 !important;
   }
-  .kpi.accent .label,
-  .kpi.accent .val,
-  .kpi.accent .val .unit,
-  .kpi.accent > div:last-child { color: #000 !important; }
-  .kpi.accent .label .kdot { background: #666 !important; }
+  body:not(.print-dash) .kpi.accent .label,
+  body:not(.print-dash) .kpi.accent .val,
+  body:not(.print-dash) .kpi.accent .val .unit,
+  body:not(.print-dash) .kpi.accent > div:last-child { color: #000 !important; }
+  body:not(.print-dash) .kpi.accent .label .kdot { background: #666 !important; }
 
   /* 다른 페이지 (dashboard 등) 인쇄용 최소 대응 */
-  .kpi { break-inside: avoid !important; }
+  body:not(.print-dash) .kpi { break-inside: avoid !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   대시보드 인쇄 — 화면 그대로 (v3.33)
+   대시보드 화면이 열려 있으면 body 에 print-dash 가 붙음 (Ctrl+P 로 인쇄해도 같은 양식)
+   · 기기(모바일·노트북)와 상관없이 데스크톱 화면 배치(폭 1474px)로 그린 뒤 A4 가로에 맞게 72% 축소
+   · 색·카드·그래프 그대로, 바탕만 흰색 (잉크 절약) · 카드가 페이지 중간에서 잘리지 않음
+   ═══════════════════════════════════════════════════════════ */
+@page dash { size: A4 landscape; margin: 8mm; }
+.print-only, .print-head { display: none; }
+@media print {
+  body.print-dash { font-size: 14px !important; line-height: 1.5 !important; color: var(--ink-1) !important; }
+  body.print-dash main {
+    page: dash;
+    width: 1474px !important; max-width: none !important;   /* × 0.72 = A4 가로 인쇄 폭(281mm ≒ 1062px) */
+    padding: 0 !important;
+    zoom: 0.72;                        /* 1360px 배치를 A4 가로에 맞게 축소 (2쪽 안에 들어가도록) */
+  }
+  body.print-dash .print-only { display: inline !important; }
+  body.print-dash .print-head {
+    display: flex !important; justify-content: space-between; align-items: center;
+    font-size: 11px; color: var(--ink-3); border-bottom: 1px solid var(--line);
+    padding-bottom: 6px; margin-bottom: 14px;
+  }
+  body.print-dash .page-head { margin-bottom: 14px !important; }
+  body.print-dash .page-head .hstack { display: none !important; }   /* 담당자·기간 선택 → 머리줄에 글자로 표시 */
+  body.print-dash .alert-bar { margin-bottom: 14px !important; }
+  body.print-dash .kpis { display: grid !important; grid-template-columns: repeat(4, 1fr) !important; gap: 12px !important; margin-bottom: 14px !important; }
+  body.print-dash .row-2 { display: grid !important; grid-template-columns: 1.65fr 1fr !important; gap: 12px !important; margin-bottom: 14px !important; }
+  body.print-dash .row-3 { display: grid !important; grid-template-columns: 1fr 1fr 1fr !important; gap: 12px !important; margin-bottom: 14px !important; }
+  body.print-dash .kpi,
+  body.print-dash .card,
+  body.print-dash .alert-bar { break-inside: avoid !important; page-break-inside: avoid !important; }
+  body.print-dash .row-2,
+  body.print-dash .kpis { break-inside: avoid !important; page-break-inside: avoid !important; }
+  body.print-dash .card { border: 1px solid var(--line) !important; }
+  body.print-dash .kpi { border: 1px solid var(--line) !important; }
+  body.print-dash .tbl tr.clickable { cursor: default; }
+  /* 화면 전용 조작 요소 숨김 (버튼은 공통 규칙에서 이미 숨김) */
+  body.print-dash select,
+  body.print-dash .filter-select,
+  body.print-dash .date-range { display: none !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════

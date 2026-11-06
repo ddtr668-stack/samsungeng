@@ -91,6 +91,7 @@ const FilePreviewModal = ({ open, file, onClose }) => {
 
   return (
     <div className="modal-backdrop" {...backdropClose(onClose)}>
+      <BackClose onClose={onClose}/>
       <div className="modal modal-wide" style={{maxWidth:900, maxHeight:'90vh', display:'flex', flexDirection:'column'}}>
         {/* 헤드 */}
         <div className="modal-head">

@@ -139,6 +139,7 @@ const Modal = ({ open, onClose, title, subtitle, children, footer, width = 'defa
 
   return (
     <div className="modal-backdrop" {...backdropClose(onClose)}>
+      <BackClose onClose={onClose}/>
       <div ref={modalElRef} className={'modal' + wCls} style={modalStyle}>
         <div
           className="modal-head"
@@ -236,7 +237,11 @@ const useToast = () => React.useContext(ToastContext);
 
 // ─── 확인 다이얼로그 ───
 const useConfirm = () => {
-  return useCallback((message) => Promise.resolve(window.confirm(message)), []);
+  // { title, message } 객체로 불러도 내용이 보이도록 (예전: "[object Object]" 로 표시됨)
+  return useCallback((m) => {
+    const text = m && typeof m === 'object' ? [m.title, m.message].filter(Boolean).join('\n\n') : m;
+    return Promise.resolve(window.confirm(text));
+  }, []);
 };
 
 Object.assign(window, {

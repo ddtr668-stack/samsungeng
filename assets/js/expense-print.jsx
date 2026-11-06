@@ -1001,6 +1001,7 @@ const ExpensePrintPreview = ({ html, onPrint, onClose, printing }) => {
       position:'fixed', inset:0, zIndex:100000, background:'#4b4f52',
       display:'flex', flexDirection:'column',
     }}>
+      {window.BackClose && <window.BackClose onClose={onClose}/>}
       <div style={{
         display:'flex', alignItems:'center', gap:10, padding:'10px 16px',
         background:'#22503A', color:'#fff', fontSize:13, fontWeight:600, flex:'0 0 auto',
