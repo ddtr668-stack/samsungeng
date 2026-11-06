@@ -981,7 +981,7 @@ button.check:disabled{cursor:wait;opacity:.7}
    · 색·카드·그래프 그대로, 바탕만 흰색 (잉크 절약) · 카드가 페이지 중간에서 잘리지 않음
    ═══════════════════════════════════════════════════════════ */
 @page dash { size: A4 landscape; margin: 8mm; }
-.print-only, .print-head { display: none; }
+.print-only, .print-head, .print-rows { display: none; }
 @media print {
   body.print-dash { font-size: 14px !important; line-height: 1.5 !important; color: var(--ink-1) !important; }
   body.print-dash main {
@@ -1010,6 +1010,17 @@ button.check:disabled{cursor:wait;opacity:.7}
   body.print-dash .card { border: 1px solid var(--line) !important; }
   body.print-dash .kpi { border: 1px solid var(--line) !important; }
   body.print-dash .tbl tr.clickable { cursor: default; }
+  /* 긴 표(미수금 등): 카드째 다음 쪽으로 넘기지 않고 이어서 나눔 · 표 머리는 쪽마다 반복 · 줄은 안 잘림 */
+  body.print-dash .card.print-break-ok { break-inside: auto !important; page-break-inside: auto !important; }
+  body.print-dash .tbl thead { display: table-header-group; }
+  body.print-dash .tbl tr { break-inside: avoid; page-break-inside: avoid; }
+  body.print-dash .tbl-wrap { overflow: visible !important; max-height: none !important; }
+  body.print-dash .screen-rows { display: none !important; }
+  body.print-dash .print-rows { display: table-row-group !important; }
+  /* 인쇄용 줄은 촘촘하게 (한 쪽에 더 많이) · 긴 현장명도 잘리지 않게 */
+  body.print-dash .print-rows td { padding-top: 5px !important; padding-bottom: 5px !important; }
+  body.print-dash .print-rows .p-name { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; max-width: none !important; }
+  body.print-dash .print-total td { border-top: 2px solid var(--ink-2) !important; background: var(--bg-2) !important; font-weight: 700; }
   /* 화면 전용 조작 요소 숨김 (버튼은 공통 규칙에서 이미 숨김) */
   body.print-dash select,
   body.print-dash .filter-select,

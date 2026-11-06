@@ -102,25 +102,13 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
 
   // ─── 인쇄: 대시보드 화면 그대로 (v3.33) ───
   // 대시보드가 열려 있는 동안 body 에 print-dash → [인쇄] 버튼이든 Ctrl+P 든 같은 양식 (app.css 참고)
-  useEffect(() => {
-    document.body.classList.add('print-dash');
-    return () => document.body.classList.remove('print-dash');
-  }, []);
+  usePrintReport();
   const periodLabel = (() => {
     const f = (ym) => ym ? ym.replace('-', '.') : '';
     if (!range.from && !range.to) return '전체 기간';
     return `${f(range.from || dataMinYm) || '—'} – ${f(range.to || dataMaxYm) || '—'}`;
   })();
-  const printDashboard = () => {
-    const prev = document.title;
-    const d = new Date();
-    const ymd = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-    // PDF 로 저장할 때 파일 이름
-    document.title = `대시보드_${selManager === 'all' ? '전체' : selManager}_${ymd}`;
-    const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore); };
-    window.addEventListener('afterprint', restore);
-    window.print();
-  };
+  const printDashboard = () => printReport(`대시보드_${selManager === 'all' ? '전체' : selManager}`);
 
   // ─── 세금계산서 발행 처리 (v3.33) ───
   // 실제 전자세금계산서 발행(홈택스 등)은 이 사이트와 연동되어 있지 않으므로,
@@ -207,10 +195,7 @@ const ScreenDashboard = ({ data: allData, onNav, onSelectContract, viewManager, 
   return (
     <>
       {/* 인쇄할 때만 보이는 머리줄 */}
-      <div className="print-head">
-        <span>{typeof getSheetName === 'function' ? getSheetName() : '계약관리'} · 담당 {selManager === 'all' ? '전체' : selManager} · 기간 {periodLabel}</span>
-        <span>출력 {(() => { const d = new Date(); const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}.${p(d.getMonth()+1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; })()}</span>
-      </div>
+      <PrintHead>담당 {selManager === 'all' ? '전체' : selManager} · 기간 {periodLabel}</PrintHead>
       <div className="page-head">
         <div>
           <h1>{selManager === 'all' ? <><span className="hl">종합 경영</span> 대시보드</> : <><span className="hl">{selManager}</span> 담당 대시보드</>}</h1>

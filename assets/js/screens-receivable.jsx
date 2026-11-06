@@ -98,6 +98,22 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
 
   const maxCatBal = Math.max(...byCategory.map(c => c.balance));
 
+  // ─── 인쇄: 화면 그대로 A4 가로 (v3.35) ───
+  // 화면 표는 12건씩 나눠 보이지만, 인쇄에는 지금 필터에 맞는 미수금 전체 + 합계 줄
+  usePrintReport();
+  const AMOUNT_LABEL = { u1000:'1,000만 미만', u5000:'1,000만~5,000만', u10000:'5,000만~1억', o10000:'1억 이상' };
+  const SORT_LABEL = { balance:'미수 잔금', totalAmount:'계약금액', paidAmount:'수금액' };
+  const mgrLabel = !viewManager || viewManager === 'all' ? '전체' : viewManager;
+  const filterLabel = [
+    category !== 'all' && `구분 ${category}`,
+    status !== 'all' && `상태 ${status}`,
+    year !== 'all' && `${year}년${month !== 'all' ? ' ' + parseInt(month) + '월' : ''}`,
+    year === 'all' && month !== 'all' && `${parseInt(month)}월`,
+    amountRange !== 'all' && `잔금 ${AMOUNT_LABEL[amountRange]}`,
+    search && `검색 "${search}"`,
+  ].filter(Boolean).join(' · ') || '전체 미수금';
+  const totalPaid = filtered.reduce((s,c) => s + (c.paidAmount || 0), 0);
+
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('desc'); }
@@ -105,6 +121,8 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
 
   return (
     <>
+      {/* 인쇄할 때만 보이는 머리줄 */}
+      <PrintHead>담당 {mgrLabel} · 조건 {filterLabel} · {SORT_LABEL[sortKey] || '미수 잔금'} {sortDir === 'asc' ? '낮은' : '높은'} 순</PrintHead>
       <div className="page-head">
         <div>
           <h1><span className="hl">미수금</span> 관리</h1>
@@ -121,6 +139,9 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
         </div>
         <div className="hstack">
           <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
+          <button className="btn-ghost" onClick={() => printReport(`미수금_${mgrLabel}`)}
+            title="지금 화면 그대로 A4 가로로 인쇄 (필터에 맞는 미수금 전체) · 인쇄 창에서 'PDF로 저장'을 고르면 PDF 파일">
+            <Icon name="print" size={14}/>인쇄 · PDF</button>
           <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('receivables',
             ['계약번호','계약일','담당자','구분','거래처','프로젝트명','계약금','수금액','미수 잔금','수금률','상태'],
             sorted.map(c => [contractCode(c), c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.totalAmount, c.paidAmount, c.balance, c.totalAmount ? Math.round(c.paidAmount / c.totalAmount * 100) + '%' : '', c.status]))}>
@@ -183,7 +204,7 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
       </div>
 
       {/* 필터 + 리스트 */}
-      <div className="controls-bar" style={{marginBottom:16}}>
+      <div className="controls-bar no-print" style={{marginBottom:16}}>
         <button className={`chip ${category === 'all' ? 'on' : ''}`} onClick={()=>setCategory('all')}>전체 <span className="n">{receivables.length}</span></button>
         {byCategory.map(c => (
           <button key={c.name} className={`chip ${category === c.name ? 'on' : ''}`} onClick={()=>setCategory(c.name)}>
@@ -192,8 +213,8 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
         ))}
       </div>
 
-      <div className="card tight">
-        <div className="controls-bar">
+      <div className="card tight print-break-ok">
+        <div className="controls-bar no-print">
           <div className="search" style={{width:260,margin:0}}>
             <span className="sicon"><Icon name="search" size={14} stroke={2}/></span>
             <input placeholder="프로젝트·거래처 검색"
@@ -256,7 +277,7 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
                 <th className="center" style={{width:80}}>상태</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="screen-rows">
               {paged.map((c, i) => {
                 const rank = (page-1)*12 + i + 1;
                 const paidPct = c.totalAmount > 0 ? c.paidAmount / c.totalAmount : 0;
@@ -291,11 +312,52 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
                 </td></tr>
               )}
             </tbody>
+            {/* 인쇄 전용: 페이지 나눔 없이 전체 + 합계 */}
+            <tbody className="print-rows">
+              {sorted.map((c, i) => {
+                const paidPct = c.totalAmount > 0 ? c.paidAmount / c.totalAmount : 0;
+                return (
+                  <tr key={'p' + (c.id ?? c.no)}>
+                    <td className="center" style={{fontSize:12,fontWeight:700,color: i < 3 ? 'var(--danger)' : 'var(--ink-3)'}}>{i + 1}</td>
+                    <td><CatTag cat={c.category}/></td>
+                    <td className="proj-cell">
+                      <div className="p-name">{c.projectName || '—'}</div>
+                      <div className="p-client">{c.client}</div>
+                    </td>
+                    <td className="num tnum">{fmtDate(c.contractDate)}</td>
+                    <td className="right"><Amt v={c.totalAmount}/></td>
+                    <td className="right"><Amt v={c.paidAmount} className="pos"/></td>
+                    <td className="right"><Amt v={c.balance} className="neg"/></td>
+                    <td className="center">
+                      <div style={{display:'inline-flex',alignItems:'center',gap:6}}>
+                        <div style={{width:60,height:5,background:'var(--bg-2)',borderRadius:3,overflow:'hidden'}}>
+                          <div style={{width:(paidPct*100)+'%',height:'100%',background:'var(--bronze-500)'}}></div>
+                        </div>
+                        <span className="tnum" style={{fontSize:11.5,color:'var(--ink-3)',fontWeight:600}}>{Math.round(paidPct*100)}%</span>
+                      </div>
+                    </td>
+                    <td className="center"><StatusPill status={c.status}/></td>
+                  </tr>
+                );
+              })}
+              {sorted.length === 0 ? (
+                <tr><td colSpan="9" className="empty"><div>조건에 맞는 미수금이 없습니다.</div></td></tr>
+              ) : (
+                <tr className="print-total">
+                  <td colSpan="4" style={{fontWeight:700}}>합계 · {sorted.length}건</td>
+                  <td className="right"><Amt v={totalContract}/></td>
+                  <td className="right"><Amt v={totalPaid} className="pos"/></td>
+                  <td className="right"><Amt v={totalBalance} className="neg"/></td>
+                  <td className="center tnum" style={{fontSize:11.5,fontWeight:700}}>{totalContract > 0 ? Math.round(totalPaid / totalContract * 100) : 0}%</td>
+                  <td/>
+                </tr>
+              )}
+            </tbody>
           </table>
         </div>
 
         {sorted.length > 0 && (
-          <div className="table-foot">
+          <div className="table-foot no-print">
             <span>미수 <b className="tnum" style={{color:'var(--ink-1)'}}>{sorted.length}건</b> 중 <b className="tnum">{start}–{end}</b></span>
             <Pager page={page} totalPages={totalPages} onChange={setPage}/>
           </div>
