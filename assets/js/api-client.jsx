@@ -142,6 +142,7 @@ async function apiFetch(route, opts = {}) {
 // (담당자 등 서버 응답에 없는 값은 기존 값 유지)
 function emitContractUpdated(no, contract, checkDates) {
   if (!contract && !checkDates) return;
+  if (contract && contract.checks) normalizeContractStatus(contract);
   try {
     window.dispatchEvent(new CustomEvent('hb:contract-updated', { detail: { no: Number(no), contract: contract || null, checkDates: checkDates || null } }));
   } catch (e) { /* 이벤트 실패는 무시 — 뒤에서 전체 새로고침이 따라옴 */ }
@@ -260,10 +261,33 @@ const cache = {
 
 // ─── 초기 데이터 로더 ───
 // 우선순위: (1) API 시도 → (2) 캐시 → (3) 정적 JSON
+// 진행상태 = 공사 진행 체크로 자동 (서버 DashboardApi.gs deriveStatus_ 와 같은 규칙)
+//   5개 모두 → 완료 · 1~4개 → 진행중 · 0개 → 시트에 적힌 값(없으면 미진행)
+// 서버가 예전 버전이어도 화면은 같은 기준으로 보이도록 브라우저에서도 한 번 더 맞춤
+function normalizeContractStatus(c) {
+  if (!c || !c.checks) return c;
+  const done = ['배관','실내기','실외기','시운전','인수인계'].filter(k => c.checks[k]).length;
+  const manual = String(c.status || '').replace(/\s+/g, '');
+  c.status = done >= 5 ? '완료' : done > 0 ? '진행중'
+    : (['완료','진행중','미진행'].includes(manual) ? manual : '미진행');
+  c.progress = done / 5;
+  return c;
+}
+
 function ensureIds(data) {
   if (data && Array.isArray(data.contracts)) {
-    data.contracts.forEach((c, i) => { if (c.id == null) c.id = i + 1; });
+    data.contracts.forEach((c, i) => { if (c.id == null) c.id = i + 1; normalizeContractStatus(c); });
+    recountStatus(data);
   }
+  return data;
+}
+
+// 대시보드 '계약 진행 현황' 숫자를 계약 목록의 진행상태로 다시 셈 (서버 요약 대신)
+function recountStatus(data) {
+  if (!data || !data.summary || !Array.isArray(data.contracts)) return data;
+  const sc = { 완료:0, 진행중:0, 미진행:0 };
+  data.contracts.forEach(c => { sc[c.status] = (sc[c.status] || 0) + 1; });
+  data.summary = { ...data.summary, statusCounts: sc };
   return data;
 }
 
@@ -329,6 +353,7 @@ async function refreshData() {
 // Global
 Object.assign(window, {
   apiClient: api,
+  normalizeContractStatus, recountStatus,
   loadInitialData,
   refreshData,
   getApiUrl,
