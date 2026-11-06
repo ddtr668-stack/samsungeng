@@ -124,6 +124,22 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
   ].filter(Boolean).join(' · ') || '전체 미수금';
   const totalPaid = filtered.reduce((s,c) => s + (c.paidAmount || 0), 0);
 
+  // ─── 엑셀 내보내기 (서식 있는 .xlsx, v3.37) ───
+  const toast = typeof useToast === 'function' ? useToast() : null;
+  const [xlBusy, setXlBusy] = useState(false);
+  const exportXlsx = async () => {
+    if (xlBusy) return;
+    setXlBusy(true);
+    try {
+      await exportReceivablesXlsx({
+        rows: sorted, manager: mgrLabel,
+        conditions: `담당 ${mgrLabel} · ${filterLabel} · ${SORT_LABEL[sortKey] || '미수 잔금'} ${sortDir === 'asc' ? '낮은' : '높은'} 순`,
+        paidRate, rateLabel: hasActiveFilter ? '조건에 맞는 미수 계약 수금률' : '전체 계약 대비 수금률',
+      });
+    } catch (e) { toast?.('엑셀 만들기 실패: ' + (e.message || e), 'error'); }
+    finally { setXlBusy(false); }
+  };
+
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('desc'); }
@@ -152,10 +168,8 @@ const ScreenReceivable = ({ data, onSelectContract, managerOptions, viewManager,
           <button className="btn-ghost" onClick={() => printReport(`미수금_${mgrLabel}`)}
             title="지금 화면 그대로 A4 가로로 인쇄 (필터에 맞는 미수금 전체) · 인쇄 창에서 'PDF로 저장'을 고르면 PDF 파일">
             <Icon name="print" size={14}/>인쇄 · PDF</button>
-          <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('receivables',
-            ['계약번호','계약일','담당자','구분','거래처','프로젝트명','계약금','수금액','미수 잔금','수금률','상태'],
-            sorted.map(c => [contractCode(c), c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.totalAmount, c.paidAmount, c.balance, c.totalAmount ? Math.round(c.paidAmount / c.totalAmount * 100) + '%' : '', c.status]))}>
-            <Icon name="download" size={14}/>수금 리포트</button>
+          <button className="btn-ghost" disabled={xlBusy} title="지금 목록(필터·정렬 적용)을 서식 있는 엑셀 파일(.xlsx)로 저장" onClick={exportXlsx}>
+            <Icon name="download" size={14}/>{xlBusy ? '만드는 중…' : '수금 리포트'}</button>
           <button className="btn-primary"><Icon name="file" size={14}/>독촉장 발송</button>
         </div>
       </div>

@@ -80,6 +80,28 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
     return c;
   }, [data]);
 
+  // ─── 엑셀 내보내기 (서식 있는 .xlsx, v3.37) ───
+  const toast = typeof useToast === 'function' ? useToast() : null;
+  const [xlBusy, setXlBusy] = useState(false);
+  const XL_SORT = { no:'계약번호', contractDate:'계약월', totalAmount:'계약금', balance:'잔금', profit:'이익금', progress:'진행률' };
+  const mgrName = manager !== 'all' ? manager : (!viewManager || viewManager === 'all' ? '전체' : viewManager);
+  const exportXlsx = async () => {
+    if (xlBusy) return;
+    const cond = [
+      `담당 ${mgrName}`,
+      category !== 'all' && `구분 ${category}`,
+      `진행 상태 ${status === 'all' ? '전체' : status}`,
+      year === 'all' ? '연도 전체' : `${year}년${month !== 'all' ? ' ' + parseInt(month) + '월' : ''}`,
+      year === 'all' && month !== 'all' && `${parseInt(month)}월`,
+      search && `검색 "${search}"`,
+      `정렬 ${XL_SORT[sortKey] || sortKey} ${sortDir === 'asc' ? '↑' : '↓'}`,
+    ].filter(Boolean).join(' · ');
+    setXlBusy(true);
+    try { await exportContractsXlsx({ rows: sorted, conditions: cond, manager: mgrName }); }
+    catch (e) { toast?.('엑셀 만들기 실패: ' + (e.message || e), 'error'); }
+    finally { setXlBusy(false); }
+  };
+
   // 필터 요약 KPI
   const filtered총 = filtered.reduce((s,c) => s+c.totalAmount, 0);
   const filtered잔 = filtered.reduce((s,c) => s+c.balance, 0);
@@ -96,10 +118,8 @@ const ScreenContracts = ({ data, onSelectContract, initialSearch = '', onOpenNew
         </div>
         <div className="hstack">
           <ManagerPicker managers={managerOptions} value={viewManager} onChange={onManagerChange}/>
-          <button className="btn-ghost" title="지금 목록(필터 적용)을 엑셀(CSV)로 저장" onClick={() => downloadCsv('contracts',
-            ['계약번호','시트NO','계약일','담당자','구분','거래처','프로젝트명','도급업체','계약금','수금액','잔금','이익금','진행률','상태'],
-            sorted.map(c => [contractCode(c), c.sheetNo ?? c.no, c.contractDate || '', c.manager || '', c.category, c.client, c.projectName, c.subcontractor || '', c.totalAmount, c.paidAmount, c.balance, c.profit, Math.round((c.progress || 0) * 100) + '%', c.status]))}>
-            <Icon name="download" size={14}/>엑셀 내보내기</button>
+          <button className="btn-ghost" disabled={xlBusy} title="지금 목록(필터·정렬 적용)을 서식 있는 엑셀 파일(.xlsx)로 저장" onClick={exportXlsx}>
+            <Icon name="download" size={14}/>{xlBusy ? '만드는 중…' : '엑셀 내보내기'}</button>
         </div>
       </div>
 
