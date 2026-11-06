@@ -197,6 +197,7 @@ const SiteInfoModal = ({ open, contract, onClose, onSave, saving }) => {
 
   return (
     <div className="modal-backdrop" {...backdropClose(onClose)}>
+      <BackClose onClose={onClose}/>
       <div className="modal modal-wide" style={{maxWidth: 780}}>
         {/* 헤드 */}
         <div className="modal-head">

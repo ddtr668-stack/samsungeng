@@ -137,6 +137,16 @@ async function apiFetch(route, opts = {}) {
   return data;
 }
 
+// ─── 저장 결과를 화면에 바로 반영 ───
+// 서버가 돌려준 계약 한 건을 app.jsx 가 받아 data.contracts 의 그 계약만 교체한다.
+// (담당자 등 서버 응답에 없는 값은 기존 값 유지)
+function emitContractUpdated(no, contract, checkDates) {
+  if (!contract && !checkDates) return;
+  try {
+    window.dispatchEvent(new CustomEvent('hb:contract-updated', { detail: { no: Number(no), contract: contract || null, checkDates: checkDates || null } }));
+  } catch (e) { /* 이벤트 실패는 무시 — 뒤에서 전체 새로고침이 따라옴 */ }
+}
+
 // ─── 고수준 API ───
 const api = {
   ping: () => apiFetch('ping'),
@@ -166,14 +176,23 @@ const api = {
   listUsers: () => apiFetch('users'),
   updateUser: (id, patch) => apiFetch('updateUser', { method:'POST', body:{ id, patch } }),
   deleteUser: (id) => apiFetch('deleteUser', { method:'POST', body:{ id } }),
-  setManager: (no, manager) => apiFetch('setManager', { method:'POST', body:{ no, manager } }),
+  async setManager(no, manager) {
+    const r = await apiFetch('setManager', { method:'POST', body:{ no, manager } });
+    if (r.manager) emitContractUpdated(no, { manager: r.manager, managerNo: r.managerNo, managerCode: r.managerCode });
+    return r;
+  },
   getAppSettings: () => apiFetch('appSettings'),
   saveAppSettings: pushAppSettings,
   bootstrap: () => apiFetch('bootstrap'),
   listContracts: () => apiFetch('contracts'),
   getContract: (no) => apiFetch('contract', { params: { no } }),
   // checkDates: 공사 진행 단계별 날짜 { 배관:'2026-09-25', ... } (선택)
-  updateContract: (no, patch, checkDates) => apiFetch('update', { method:'POST', body: checkDates ? { no, patch, checkDates } : { no, patch } }),
+  // 저장이 끝나면 서버가 돌려준 계약 행을 화면 데이터에 바로 반영 (전체 다시 불러오기를 기다리지 않음)
+  async updateContract(no, patch, checkDates) {
+    const r = await apiFetch('update', { method:'POST', body: checkDates ? { no, patch, checkDates } : { no, patch } });
+    emitContractUpdated(no, r.contract, r.checkDates);
+    return r;
+  },
   createContract: (contract) => apiFetch('create', { method:'POST', body:{ contract } }),
   listClients: () => apiFetch('clients'),
   expenseHistory: () => apiFetch('expenseHistory'),
@@ -182,12 +201,17 @@ const api = {
   generateExpensePdfFromHtml: (payload) => apiFetch('expensePdfHtml', { method:'POST', body: payload }),
   // ─── 수금 누적 관리 ───
   listPayments: (contractNo) => apiFetch('payments', { params: { contractNo } }),
-  createPayment: (payload) => apiFetch('createPayment', { method:'POST', body: payload }),
-  updatePayment: (payload) => apiFetch('updatePayment', { method:'POST', body: payload }),
-  deletePayment: (no) => apiFetch('deletePayment', { method:'POST', body: { no } }),
+  // 수금 저장 후 서버가 돌려준 계약(수금액·잔금)을 화면에 바로 반영
+  async createPayment(payload) { const r = await apiFetch('createPayment', { method:'POST', body: payload }); if (r.contract) emitContractUpdated(r.contract.no, r.contract); return r; },
+  async updatePayment(payload) { const r = await apiFetch('updatePayment', { method:'POST', body: payload }); if (r.contract) emitContractUpdated(r.contract.no, r.contract); return r; },
+  async deletePayment(no) { const r = await apiFetch('deletePayment', { method:'POST', body: { no } }); if (r.contract) emitContractUpdated(r.contract.no, r.contract); return r; },
   // ─── 지출품의서 확장 ───
   expenseByContract: (contractNo) => apiFetch('expenseByContract', { params: { contractNo } }),
-  saveExpense: (payload) => apiFetch('saveExpense', { method:'POST', body: payload }),
+  async saveExpense(payload) {
+    const r = await apiFetch('saveExpense', { method:'POST', body: payload });
+    if (r.contract) emitContractUpdated(payload.contractNo, r.contract);
+    return r;
+  },
   // 저장된 지출품의서 회차(설치비 기성) 삭제(취소 처리) — payload: { contractNo, no }
   cancelExpenseRound: (payload) => apiFetch('cancelExpenseRound', { method:'POST', body: payload }),
   // 지난 회차 금액·지급일 정정 (관리자) — 기성정정이력 시트에 사유와 함께 기록

@@ -209,6 +209,7 @@ const ScreenClients = ({ data, onSelectContract, onUpdated, managerOptions, view
 
       {editingClient && (
         <div className="modal-backdrop" {...backdropClose(() => !saving && setEditingClient(null))}>
+          <BackClose onClose={() => !saving && setEditingClient(null)}/>
           <div className="modal" style={{maxWidth:460}} onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <div className="modal-title">{editingClient.isNew ? '거래처 신규 등록' : '거래처 정보 수정'}</div>

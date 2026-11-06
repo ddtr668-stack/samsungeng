@@ -25,9 +25,24 @@ const App = () => {
   // 관리자: 가입·승인된 담당자 이름 (계약이 아직 없는 사람도 담당자 목록에 표시)
   const [userNames, setUserNames] = useState([]);   // 자동 로그아웃까지 남은 초 (경고 표시용)
   const [route, setRoute] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
-    catch { return { screen:'dashboard' }; }
+    let r;
+    try { r = JSON.parse(localStorage.getItem('hb.route')) || { screen:'dashboard' }; }
+    catch { r = { screen:'dashboard' }; }
+    // 뒤로가기 기록 준비 (새로고침이면 기존 기록의 화면을 그대로)
+    return window.hbHistory ? window.hbHistory.init(r) : r;
   });
+  // 화면 이동 = 화면 바꾸기 + 뒤로가기 기록 남기기
+  const go = useCallback((r) => { setRoute(r); window.hbHistory?.pushRoute(r); }, []);
+  // 기록을 늘리지 않고 화면만 바꿈 (로그인 직후 · 첫 설정 화면)
+  const goReplace = useCallback((r) => { setRoute(r); window.hbHistory?.replaceRoute(r); }, []);
+  const [exitHint, setExitHint] = useState(false);
+  useEffect(() => {
+    if (!window.hbHistory) return;
+    const off = window.hbHistory.onRoute((r) => { setRoute(r); setNavOpen(false); window.scrollTo(0, 0); });
+    let t;
+    window.hbHistory.onExitHint(() => { setExitHint(true); clearTimeout(t); t = setTimeout(() => setExitHint(false), 2000); });
+    return () => { off(); clearTimeout(t); window.hbHistory.onExitHint(null); };
+  }, []);
   const [globalSearch, setGlobalSearch] = useState('');
   const [newContractOpen, setNewContractOpen] = useState(false);
   const [expenseContract, setExpenseContract] = useState(null);
@@ -79,7 +94,7 @@ const App = () => {
       setData(res.data);
       setError(null);
       // 데이터가 없으면 API 연결부터 하도록 설정 화면으로 이동
-      if (res.source === 'empty') setRoute({ screen:'settings' });
+      if (res.source === 'empty') goReplace({ screen:'settings' });
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -146,40 +161,96 @@ const App = () => {
     return fresh;
   }, []);
 
+  // ─── 저장 후 화면 갱신 (속도 개선) ───
+  // 예전: 저장 → 전체 데이터(계약·거래처·도급업체·지출이력) 다시 불러오기가 끝날 때까지 대기
+  // 지금: 서버가 돌려준 계약 한 건을 즉시 반영하고, 전체 새로고침은 뒤에서 조용히 진행
+  useEffect(() => {
+    const onUpdated = (ev) => {
+      const { no, contract, checkDates } = ev.detail || {};
+      if (!no) return;
+      setData(d => {
+        if (!d || !Array.isArray(d.contracts)) return d;
+        let hit = false;
+        const contracts = d.contracts.map(c => {
+          if (Number(c.no) !== Number(no)) return c;
+          hit = true;
+          // 키(no·sheetNo·row)와 담당자 정보는 기존 값 유지 (예전 서버는 시트 NO 를 no 로 돌려줌)
+          const { no: _n, sheetNo: _s, row: _r, ...fields } = contract || {};
+          const next = { ...c, ...fields };
+          if (checkDates || fields.checkDates) next.checkDates = checkDates || fields.checkDates;
+          return next;
+        });
+        return hit ? { ...d, contracts } : d;
+      });
+    };
+    window.addEventListener('hb:contract-updated', onUpdated);
+    return () => window.removeEventListener('hb:contract-updated', onUpdated);
+  }, []);
+
+  // 구글 드라이브 연동 준비를 미리 (로그인 후 한가할 때) — 현장 폴더·업로드를 처음 누를 때 기다림 감소
+  // (로그인 창은 띄우지 않음: 스크립트와 Drive API 정보만 받아 둠)
+  useEffect(() => {
+    if (needLogin || !data) return;
+    if (typeof hasDriveCredentials !== 'function' || !hasDriveCredentials() || typeof loadGoogleApis !== 'function') return;
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
+    const id = idle(() => { loadGoogleApis().catch(() => {}); });
+    return () => { try { (window.cancelIdleCallback || clearTimeout)(id); } catch {} };
+  }, [needLogin, !!data]);
+
+  // 뒤에서 전체 새로고침 — 연달아 저장해도 한 번만 실행 (1.5초 모아서)
+  const bgRefreshRef = useRef({ timer: null, running: false, again: false });
+  const softRefresh = useCallback(() => {
+    const s = bgRefreshRef.current;
+    const run = async () => {
+      if (s.running) { s.again = true; return; }
+      s.running = true;
+      try { const fresh = await refreshData(); setData(fresh); }
+      catch (e) { /* 실패해도 화면에는 이미 저장 결과가 반영됨 — 다음 새로고침 때 맞춰짐 */ }
+      finally {
+        s.running = false;
+        if (s.again) { s.again = false; run(); }
+      }
+    };
+    clearTimeout(s.timer);
+    s.timer = setTimeout(run, 1500);
+    return Promise.resolve();   // 호출한 화면은 기다리지 않음
+  }, []);
+
   const [navOpen, setNavOpen] = useState(false);   // 모바일: ☰ 로 여는 사이드바
   const nav = useCallback((screen) => {
     setNavOpen(false);
-    setRoute({ screen });
+    go({ screen });
     setGlobalSearch('');
     window.scrollTo(0, 0);
   }, []);
 
   const selectContract = useCallback((no) => {
-    setRoute({ screen:'detail', contractNo:no });
+    go({ screen:'detail', contractNo:no });
     window.scrollTo(0, 0);
-  }, []);
+  }, [go]);
 
   const handleGlobalSearch = useCallback((val) => {
     setGlobalSearch(val);
     if (val && route.screen !== 'contracts') {
-      setRoute({ screen:'contracts' });
+      go({ screen:'contracts' });
     }
   }, [route.screen]);
 
   const onContractCreated = useCallback(async (contract) => {
-    // 로컬 데이터 즉시 반영
-    try {
-      const fresh = await refreshData();
-      setData(fresh);
-      setRoute({ screen:'detail', contractNo: contract.no });
-    } catch {
-      // API가 없더라도 로컬에라도 반영
-      setData(d => d ? { ...d, contracts: [...d.contracts, contract] } : d);
-    }
-  }, []);
+    // 서버가 돌려준 새 계약을 바로 목록에 넣고 상세 화면으로 이동 → 전체 새로고침은 뒤에서
+    if (!contract) { softRefresh(); return; }
+    setData(d => {
+      if (!d) return d;
+      const exists = d.contracts.some(c => Number(c.no) === Number(contract.no));
+      const id = d.contracts.reduce((m, c) => Math.max(m, Number(c.id) || 0), 0) + 1;
+      return exists ? d : { ...d, contracts: [...d.contracts, { checkDates: {}, ...contract, id }] };
+    });
+    go({ screen:'detail', contractNo: contract.no });
+    softRefresh();
+  }, [softRefresh, go]);
 
   if (loading) return <div className="boot">불러오는 중…</div>;
-  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLastActivity(Date.now()); setLoginNotice(''); setRoute({ screen:'dashboard' }); load(); }}/>;
+  if (needLogin) return <LoginScreen notice={loginNotice} onLoggedIn={() => { setLastActivity(Date.now()); setLoginNotice(''); goReplace({ screen:'dashboard' }); load(); }}/>;
   if (error && !data) return (
     <div style={{padding:40,fontSize:14,color:'var(--ink-2)'}}>
       <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>데이터 로드 실패</div>
@@ -246,6 +317,15 @@ const App = () => {
           </button>
         </div>
       )}
+      {exitHint && (
+        <div className="no-print" role="status"
+          style={{position:'fixed',left:'50%',bottom:28,transform:'translateX(-50%)',zIndex:10001,
+            background:'rgba(20,24,22,.88)',color:'#fff',borderRadius:999,padding:'9px 16px',
+            fontSize:13,boxShadow:'0 8px 24px rgba(0,0,0,.2)',whiteSpace:'nowrap'}}>
+          뒤로 버튼을 한 번 더 누르면 사이트를 나갑니다
+        </div>
+      )}
+      {navOpen && <BackClose onClose={() => setNavOpen(false)}/>}
       <div className={'app' + (navOpen ? ' nav-open' : '')}>
         <Sidebar key={uiTick} current={sideCurrent} onNav={nav} counts={counts} onLogout={logout}
           managers={managerStats} activeManager={activeManager} onPickManager={(m) => { setNavOpen(false); setViewManager(m); }}/>
@@ -277,7 +357,7 @@ const App = () => {
               onBack={() => nav('contracts')}
               onOpenExpense={(c) => setExpenseContract(c)}
               onOpenSubcontract={(c) => setSubcontractContract(c)}
-              onUpdated={refresh}
+              onUpdated={softRefresh}
               onSelectContract={selectContract}
             />
           )}
@@ -285,7 +365,7 @@ const App = () => {
             <ScreenReceivable data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract}/>
           )}
           {route.screen === 'clients' && (
-            <ScreenClients data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onUpdated={refresh}/>
+            <ScreenClients data={viewData} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onUpdated={softRefresh}/>
           )}
           {route.screen === 'expense' && (
             <ScreenExpense data={viewData} onOpenBulk={() => setBulkExpenseOpen(true)} managerOptions={managerStats} viewManager={activeManager} onManagerChange={setViewManager} onSelectContract={selectContract} onOpenExpense={(c) => setExpenseContract(c)}/>
@@ -300,7 +380,7 @@ const App = () => {
       </div>
 
       {bulkExpenseOpen && (
-        <BulkExpenseModal open={true} onClose={() => setBulkExpenseOpen(false)} data={viewData} onSaved={refresh}/>
+        <BulkExpenseModal open={true} onClose={() => setBulkExpenseOpen(false)} data={viewData} onSaved={softRefresh}/>
       )}
 
       <NewContractModal
@@ -318,7 +398,7 @@ const App = () => {
           contract={expenseContract}
           onClose={() => setExpenseContract(null)}
           data={data}
-          onSaved={refresh}
+          onSaved={softRefresh}
         />
       )}
       {subcontractContract && (

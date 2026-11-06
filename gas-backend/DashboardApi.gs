@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-10-06-02 (설치도급계약서)';
+var BUILD_VERSION_ = '2026-10-30-01 (저장 속도 개선)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -240,6 +240,7 @@ function apiUpdateContract_(payload) {
   // 공사 진행 단계 날짜 (완료로 바꾼 단계는 지정 날짜 또는 오늘, 해제한 단계는 날짜 삭제)
   if (payload.checkDates || CHECK_STEPS_.some(function (k) { return ('chk' + k) in patch; })) {
     result.checkDates = saveCheckDates_(no, patch, payload.checkDates || {});
+    if (result.contract) result.contract.checkDates = result.checkDates;
   }
   return jsonOut_(result);
 }
@@ -382,48 +383,75 @@ function applyCheckDates_(contracts) {
 // 계약 한 행에 patch 를 적용하는 실제 로직 (apiUpdateContract_ 와 지출품의서 연동
 // 동기화 양쪽에서 공용으로 사용) — ContentService 로 감싸지 않은 순수 객체를 돌려준다.
 // categoryLabel: 변경 이력에 남길 구분(직접 수정 vs 지출품의서 금액 반영 등)
-function applyContractPatch_(no, patch, categoryLabel) {
+// preFound: 같은 요청 안에서 이미 findContractByUid_ 로 찾은 결과가 있으면 넘겨서 다시 읽지 않음
+function applyContractPatch_(no, patch, categoryLabel, preFound) {
   no = Number(no);
   patch = patch || {};
   if (!no) return { ok: false, error: '계약 번호가 필요합니다.', code: 'BAD_PARAM' };
 
   var sheet = getDbSheet_();
   // 계약 NO 는 시트에서 중복될 수 있어(연도별 재시작 등) 고유ID 로 행을 찾는다
-  var targetRow = findContractRowByUid_(sheet, no);
-  if (targetRow < 0) return { ok: false, error: '계약 행을 찾지 못했습니다: #' + no, code: 'NOT_FOUND' };
+  // (속도) 행 찾기에서 읽은 값을 그대로 씀 → 셀마다 다시 읽지 않음
+  var found = preFound || findContractByUid_(sheet, no);
+  if (!found) return { ok: false, error: '계약 행을 찾지 못했습니다: #' + no, code: 'NOT_FOUND' };
+  var targetRow = found.row;
+  var rowVals = found.values.slice();
 
-  var projectNameForLog = sheet.getRange(targetRow, COL_MAP_.projectName).getValue() || '';
+  var tz = Session.getScriptTimeZone();
+  var fmt = function (v) { return v instanceof Date ? Utilities.formatDate(v, tz, 'yyyy-MM-dd') : v; };
+  var projectNameForLog = rowVals[COL_MAP_.projectName - 1] || '';
   var changesForLog = [];
   var updated = [];
+  var writes = {};   // { 열번호: 값 } — 읽기와 섞지 않고 마지막에 한꺼번에 씀
   Object.keys(patch).forEach(function(field) {
     if (!EDITABLE_FIELDS_[field] || !COL_MAP_[field]) return;
     var col = COL_MAP_[field];
     var value = patch[field];
-
-    var before = sheet.getRange(targetRow, col).getValue();
-    var beforeStr = before instanceof Date ? Utilities.formatDate(before, Session.getScriptTimeZone(), 'yyyy-MM-dd') : before;
-    var afterStr = value instanceof Date ? Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd') : value;
+    var beforeStr = fmt(rowVals[col - 1]);
+    var afterStr = fmt(value);
     if (String(beforeStr == null ? '' : beforeStr) !== String(afterStr == null ? '' : afterStr)) {
       changesForLog.push({ field: field, label: FIELD_LABELS_[field] || field, before: beforeStr, after: afterStr });
     }
-
-    // 잔금/기성잔액/이윤/마진율은 자동 계산으로 갱신 (수정 후)
-    sheet.getRange(targetRow, col).setValue(value);
+    rowVals[col - 1] = value;
+    writes[col] = value;
     updated.push(field);
   });
 
-  // 자동 계산 필드 재계산: 잔금·기성잔액·이윤·마진율
-  recomputeDerivedFields_(sheet, targetRow);
+  // 자동 계산 필드 재계산: 잔금·기성잔액·이윤·마진율·진행률 (메모리에서 계산)
+  var derived = computeDerivedFields_(rowVals);
+  Object.keys(derived).forEach(function (col) { rowVals[col - 1] = derived[col]; writes[col] = derived[col]; });
 
-  SpreadsheetApp.flush();
-
+  // 변경 이력 먼저 (이력 시트의 마지막 행 읽기가 계약 쓰기 뒤에 오면 쓰기 반영을 기다리게 됨)
   if (changesForLog.length) {
     logChange_(categoryLabel || '계약정보 수정', '#' + no + ' ' + projectNameForLog, changesForLog);
   }
 
-  // 갱신된 행 전체 다시 읽어서 반환
-  var row = sheet.getRange(targetRow, 1, 1, DB_LAST_COL_).getValues()[0];
-  return { ok: true, updated: updated, contract: rowToContract_(row) };
+  // 쓰기만 연속으로 → Apps Script 가 한 번에 모아서 반영 (중간 flush 없음)
+  Object.keys(writes).forEach(function (col) { sheet.getRange(targetRow, Number(col)).setValue(writes[col]); });
+
+  // 갱신된 행을 화면용 계약 객체로 (다시 읽지 않고 메모리 값 사용)
+  var contract = rowToContract_(rowVals);
+  contract.sheetNo = contract.no;
+  contract.no = no;
+  contract.row = targetRow;
+  return { ok: true, updated: updated, contract: contract };
+}
+
+// 잔금·기성잔액·이윤·마진율·진행률 — 행 값 배열로 계산 → { 열번호: 값 }
+function computeDerivedFields_(r) {
+  var n = function (col) { return Number(r[col - 1]) || 0; };
+  var total = n(COL_MAP_.totalAmount), paid = n(COL_MAP_.paidAmount);
+  var subA = n(COL_MAP_.subcontractAmount), subP = n(COL_MAP_.subcontractPaid);
+  var profit = total - n(COL_MAP_.productCost) - subA - n(COL_MAP_.incidental) - n(COL_MAP_.salesCost);
+  var isOn = function (col) { var x = r[col - 1]; return x === true || x === 'TRUE' || x === 1; };
+  var done = [COL_MAP_.chk배관, COL_MAP_.chk실내기, COL_MAP_.chk실외기, COL_MAP_.chk시운전, COL_MAP_.chk인수인계].filter(isOn).length;
+  var out = {};
+  out[COL_MAP_.balance] = total - paid;
+  out[COL_MAP_.subcontractBalance] = subA - subP;
+  out[COL_MAP_.profit] = profit;
+  out[COL_MAP_.marginRate] = total > 0 ? profit / total : 0;
+  out[COL_MAP_.progress] = done / 5;
+  return out;
 }
 
 // ============================================================
@@ -435,7 +463,61 @@ function applyContractPatch_(no, patch, categoryLabel) {
 //    이전에 기록해둔 금액이 지워지므로, 0보다 큰 값이 들어온 항목만 반영한다.
 //    (예: 이번 회차에 제품 내역서를 입력하지 않았으면 계약의 제품대는 그대로 유지)
 // ============================================================
-function syncContractAmountsFromExpense_(contractNo, p) {
+// found: findContractByUid_ 결과(같은 요청에서 이미 읽은 것) — 있으면 계약 시트를 다시 읽지 않음
+// budgetPatch: 화면에서 직접 고친 계약 총액 { productCost, subcontractAmount, incidental, salesCost }
+//              → 예전엔 브라우저가 update 요청을 따로 한 번 더 보냈음. 이제 같은 쓰기에 합침
+var EXPENSE_BUDGET_FIELDS_ = ['productCost', 'subcontractAmount', 'incidental', 'salesCost'];
+function syncContractAmountsFromExpense_(contractNo, p, found, budgetPatch) {
+  try {
+    if (found) {
+      var current0 = rowToContract_(found.values);
+      var patch0 = {};
+      if (!p.manual) {
+        var cand0 = expenseSyncCandidates_(p);
+        Object.keys(cand0).forEach(function (field) {
+          if (cand0[field] > 0 && (Number(current0[field]) || 0) <= 0) patch0[field] = cand0[field];
+        });
+      }
+      var budgetFields = [];
+      Object.keys(budgetPatch || {}).forEach(function (field) {
+        if (EXPENSE_BUDGET_FIELDS_.indexOf(field) < 0) return;
+        var v = Number(budgetPatch[field]);
+        if (isNaN(v)) return;
+        patch0[field] = v;
+        budgetFields.push(field);
+      });
+      if (Object.keys(patch0).length === 0) return { ok: true, updated: [], budgetFields: [] };
+      var res0 = applyContractPatch_(contractNo, patch0, '지출품의서 금액 반영', found);
+      res0.budgetFields = res0.ok ? budgetFields : [];
+      // 화면 토스트용: 자동 채움만 updated 에 (화면에서 직접 고친 총액은 budgetFields 로 따로)
+      res0.updated = (res0.updated || []).filter(function (f) { return budgetFields.indexOf(f) < 0; });
+      return res0;
+    }
+    return syncContractAmountsFromExpenseLegacy_(contractNo, p);
+  } catch (err) {
+    Logger.log('syncContractAmountsFromExpense_ 실패: ' + err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+function expenseSyncCandidates_(p) {
+  var productTotal = 0;
+  if (p.productSummary && Number(p.productSummary.totalMaterial)) {
+    productTotal = Number(p.productSummary.totalMaterial) || 0;
+  } else if (Array.isArray(p.productItems)) {
+    p.productItems.forEach(function (it) {
+      productTotal += (Number(it.qty) || 0) * (Number(it.unitPrice) || 0);
+    });
+  }
+  return {
+    subcontractAmount: Number(p.amount) || 0,      // 금회 요청금액(설치비)
+    productCost: productTotal,                      // 제품 내역서 합계
+    salesCost: Number(p.commission) || 0,           // 영업 수수료 합계
+    incidental: Number(p.etcCost) || 0              // 기타 경비 합계
+  };
+}
+
+function syncContractAmountsFromExpenseLegacy_(contractNo, p) {
   try {
     var productTotal = 0;
     if (p.productSummary && Number(p.productSummary.totalMaterial)) {
@@ -476,31 +558,15 @@ function syncContractAmountsFromExpense_(contractNo, p) {
   }
 }
 
-function recomputeDerivedFields_(sheet, row) {
-  var total = Number(sheet.getRange(row, COL_MAP_.totalAmount).getValue()) || 0;
-  var paid = Number(sheet.getRange(row, COL_MAP_.paidAmount).getValue()) || 0;
-  var subA = Number(sheet.getRange(row, COL_MAP_.subcontractAmount).getValue()) || 0;
-  var subP = Number(sheet.getRange(row, COL_MAP_.subcontractPaid).getValue()) || 0;
-  var product = Number(sheet.getRange(row, COL_MAP_.productCost).getValue()) || 0;
-  var inc = Number(sheet.getRange(row, COL_MAP_.incidental).getValue()) || 0;
-  var sales = Number(sheet.getRange(row, COL_MAP_.salesCost).getValue()) || 0;
-
-  sheet.getRange(row, COL_MAP_.balance).setValue(total - paid);
-  sheet.getRange(row, COL_MAP_.subcontractBalance).setValue(subA - subP);
-  var profit = total - product - subA - inc - sales;
-  sheet.getRange(row, COL_MAP_.profit).setValue(profit);
-  sheet.getRange(row, COL_MAP_.marginRate).setValue(total > 0 ? profit / total : 0);
-
-  // 진행률 = 5개 체크박스 평균
-  var checks = [
-    sheet.getRange(row, COL_MAP_.chk배관).getValue(),
-    sheet.getRange(row, COL_MAP_.chk실내기).getValue(),
-    sheet.getRange(row, COL_MAP_.chk실외기).getValue(),
-    sheet.getRange(row, COL_MAP_.chk시운전).getValue(),
-    sheet.getRange(row, COL_MAP_.chk인수인계).getValue()
-  ];
-  var done = checks.filter(function(x){ return x === true || x === 'TRUE' || x === 1; }).length;
-  sheet.getRange(row, COL_MAP_.progress).setValue(done / 5);
+// 시트의 한 행을 한 번에 읽어 자동 계산 필드(잔금·기성잔액·이윤·마진율·진행률)를 다시 씀
+// (예전: 셀마다 읽기 12번 + 쓰기 5번이 섞여 매번 시트 반영을 기다림)
+// overrides: { 열번호: 값 } — 방금 쓴 값이 있으면 다시 읽지 않고 이 값으로 계산
+function recomputeDerivedFields_(sheet, row, overrides) {
+  var r = sheet.getRange(row, 1, 1, DB_LAST_COL_).getValues()[0];
+  if (overrides) Object.keys(overrides).forEach(function (col) { r[Number(col) - 1] = overrides[col]; });
+  var derived = computeDerivedFields_(r);
+  Object.keys(derived).forEach(function (col) { sheet.getRange(row, Number(col)).setValue(derived[col]); r[Number(col) - 1] = derived[col]; });
+  return r;
 }
 
 // ============================================================
@@ -548,12 +614,12 @@ function apiCreateContract_(payload, user) {
     rowData[COL_MAP_.status - 1] = contract.status || '미진행';
     rowData[COL_MAP_.note - 1] = contract.note || '';
 
+    // 자동 계산 필드까지 메모리에서 채워 한 번에 씀 (쓰기 1번)
+    var derivedNew = computeDerivedFields_(rowData);
+    Object.keys(derivedNew).forEach(function (col) { rowData[Number(col) - 1] = derivedNew[col]; });
     sheet.getRange(newRow, 1, 1, DB_LAST_COL_).setValues([rowData]);
-    recomputeDerivedFields_(sheet, newRow);
-    SpreadsheetApp.flush();
 
-    var savedRow = sheet.getRange(newRow, 1, 1, DB_LAST_COL_).getValues()[0];
-    var created = rowToContract_(savedRow);
+    var created = rowToContract_(rowData);
     // 새 행에도 고유ID 부여 → 이후 모든 기능은 고유ID 로 이 계약을 구분
     var allRows = sheet.getRange(DATA_START_ROW, 1, newRow - DATA_START_ROW + 1, DB_LAST_COL_).getValues();
     var allUids = ensureContractUids_(sheet, allRows);
@@ -798,13 +864,22 @@ function migrateDuplicateNoRecords_(fresh, keptName) {
 }
 
 function findContractRowByUid_(sheet, uid) {
+  var f = findContractByUid_(sheet, uid);
+  return f ? f.row : -1;
+}
+
+// 고유ID 로 계약 행 찾기 → { row: 시트 행번호, values: 그 행의 A~AC 값 } (없으면 null)
+// 행 전체를 이미 읽었으므로 호출한 쪽이 셀을 다시 읽을 필요가 없다
+function findContractByUid_(sheet, uid) {
   uid = Number(uid);
   var lastRow = sheet.getLastRow();
-  if (!uid || lastRow < DATA_START_ROW) return -1;
+  if (!uid || lastRow < DATA_START_ROW) return null;
   var values = sheet.getRange(DATA_START_ROW, 1, lastRow - DATA_START_ROW + 1, DB_LAST_COL_).getValues();
   var uids = ensureContractUids_(sheet, values);
-  for (var i = 0; i < uids.length; i++) { if (uids[i] === uid) return DATA_START_ROW + i; }
-  return -1;
+  for (var i = 0; i < uids.length; i++) {
+    if (uids[i] === uid) return { row: DATA_START_ROW + i, values: values[i] };
+  }
+  return null;
 }
 
 function rowToContract_(row) {
@@ -1386,11 +1461,11 @@ function apiCreatePayment_(payload) {
   sheet.getRange(newRow, 1, 1, PAYMENT_LAST_COL_).setValues([rowData]);
 
   // 계약관리 시트의 paidAmount 합계 자동 갱신
-  syncContractPaidAmount_(contractNo);
+  var paidContract = syncContractPaidAmount_(contractNo);
 
   SpreadsheetApp.flush();
   var saved = paymentRowToObj_(sheet.getRange(newRow, 1, 1, PAYMENT_LAST_COL_).getValues()[0]);
-  return jsonOut_({ ok: true, payment: saved });
+  return jsonOut_({ ok: true, payment: saved, contract: paidContract || null });
 }
 
 // 수금 회차 수정
@@ -1418,10 +1493,10 @@ function apiUpdatePayment_(payload) {
   if (payload.method != null) sheet.getRange(targetRow, PAYMENT_COL_MAP_.method).setValue(payload.method);
   if (payload.note != null) sheet.getRange(targetRow, PAYMENT_COL_MAP_.note).setValue(payload.note);
 
-  syncContractPaidAmount_(contractNo);
+  var paidContract = syncContractPaidAmount_(contractNo);
   SpreadsheetApp.flush();
   var saved = paymentRowToObj_(sheet.getRange(targetRow, 1, 1, PAYMENT_LAST_COL_).getValues()[0]);
-  return jsonOut_({ ok: true, payment: saved });
+  return jsonOut_({ ok: true, payment: saved, contract: paidContract || null });
 }
 
 // 수금 회차 삭제
@@ -1445,9 +1520,9 @@ function apiDeletePayment_(payload) {
   if (targetRow < 0) return errorOut_('수금 행을 찾지 못했습니다: #' + no, 'NOT_FOUND');
 
   sheet.deleteRow(targetRow);
-  syncContractPaidAmount_(contractNo);
+  var paidContract = syncContractPaidAmount_(contractNo);
   SpreadsheetApp.flush();
-  return jsonOut_({ ok: true, deleted: no });
+  return jsonOut_({ ok: true, deleted: no, contract: paidContract || null });
 }
 
 // 계약관리 시트의 paidAmount 를 수금이력 합계로 동기화
@@ -1468,8 +1543,13 @@ function syncContractPaidAmount_(contractNo) {
   var cSheet = getDbSheet_();
   var row = findContractRowByUid_(cSheet, contractNo);
   if (row < 0) return;
-  cSheet.getRange(row, COL_MAP_.paidAmount).setValue(total);
-  recomputeDerivedFields_(cSheet, row);
+  var ov = {}; ov[COL_MAP_.paidAmount] = total;
+  var r = recomputeDerivedFields_(cSheet, row, ov);          // 읽기 먼저
+  cSheet.getRange(row, COL_MAP_.paidAmount).setValue(total);   // 쓰기는 뒤에 모아서
+  // 화면이 전체를 다시 불러오지 않고 이 계약만 바로 고칠 수 있도록 갱신된 계약을 돌려줌
+  var c = rowToContract_(r);
+  c.sheetNo = c.no; c.no = Number(contractNo); c.row = row;
+  return c;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1481,18 +1561,33 @@ function syncContractPaidAmount_(contractNo) {
 function apiExpenseHistoryByContract_(contractNo) {
   contractNo = Number(contractNo);
   if (!contractNo) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
+  var res;
+  try { res = readExpenseHistoryByContract_(contractNo); }
+  catch (err) { return errorOut_('지출품의서 이력 조회 실패: ' + err.message, 'HISTORY_FAILED'); }
+  return jsonOut_({ ok: true, history: res.history, corrections: res.corrections });
+}
+
+// 계약 한 건의 지출품의서 이력 + 정정 이력 → { history, corrections }
+// (속도) 상세 JSON 열(R)은 줄마다 수십 KB 라, 시트 전체의 JSON 을 읽지 않고
+//        A~Q 로 이 계약의 줄만 고른 뒤 그 줄들의 JSON 만 읽음
+function readExpenseHistoryByContract_(contractNo) {
+  contractNo = Number(contractNo);
   var out = [];
-  try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(expenseLogName_());
-    if (sheet && sheet.getLastRow() >= 2 && sheet.getLastColumn() >= EXPENSE_EXT_FIRST_COL_) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(expenseLogName_());
+  if (sheet && sheet.getLastRow() >= 2 && sheet.getLastColumn() >= EXPENSE_EXT_FIRST_COL_) {
       var n = sheet.getLastRow() - 1;
-      var vals = sheet.getRange(2, 1, n, EXPENSE_EXT_FIRST_COL_ + EXPENSE_EXT_HEADERS_.length - 1).getValues();
-      for (var i = 0; i < vals.length; i++) {
+      var jsonCol = EXPENSE_EXT_FIRST_COL_ + EXPENSE_EXT_HEADERS_.length - 1;   // R열
+      var vals = sheet.getRange(2, 1, n, jsonCol - 1).getValues();
+      var hits = [];
+      for (var h = 0; h < vals.length; h++) {
+        if (vals[h][0] && Number(vals[h][EXPENSE_EXT_FIRST_COL_ - 1]) === contractNo) hits.push(h);
+      }
+      var jsons = readCellsInRows_(sheet, hits.map(function (x) { return x + 2; }), jsonCol, n + 1);
+      for (var q = 0; q < hits.length; q++) {
+        var i = hits[q];
         var r = vals[i];
-        if (!r[0]) continue;
-        if (Number(r[EXPENSE_EXT_FIRST_COL_ - 1]) !== contractNo) continue;
         var detail = {};
-        try { detail = JSON.parse(r[EXPENSE_EXT_FIRST_COL_ + 2] || '{}') || {}; } catch (e) { detail = {}; }
+        try { detail = JSON.parse(jsons[q] || '{}') || {}; } catch (e) { detail = {}; }
         var d = r[1];
         out.push({
           no: i + 2,                                   // 시트 행번호 (선택 키)
@@ -1533,14 +1628,23 @@ function apiExpenseHistoryByContract_(contractNo) {
           manual: !!detail.manual
         });
       }
-    }
-  } catch (err) {
-    return errorOut_('지출품의서 이력 조회 실패: ' + err.message, 'HISTORY_FAILED');
   }
   out.sort(function(a, b) { return a.roundNo - b.roundNo; });
   var corrections = [];
   try { corrections = readCorrections_(contractNo); } catch (e) { corrections = []; }
-  return jsonOut_({ ok: true, history: out, corrections: corrections });
+  return { history: out, corrections: corrections };
+}
+
+// 여러 줄의 한 칸씩 읽기 — 줄 수가 적으면 그 칸만 따로, 많으면 열 전체를 한 번에
+// rows: 시트 행번호 배열, lastRow: 시트 마지막 행 → 같은 순서의 값 배열
+function readCellsInRows_(sheet, rows, col, lastRow) {
+  if (!rows.length) return [];
+  if (rows.length > 12) {
+    var first = rows[0], last = rows[rows.length - 1];
+    var colVals = sheet.getRange(first, col, last - first + 1, 1).getValues();
+    return rows.map(function (r) { return colVals[r - first][0]; });
+  }
+  return rows.map(function (r) { return sheet.getRange(r, col).getValue(); });
 }
 
 // 지출품의서 저장 (PDF 없이 이력만) · 저장 버튼 전용
@@ -1550,14 +1654,37 @@ function apiExpenseHistoryByContract_(contractNo) {
 //            companyName, commission, etcCost, grandTotal }
 // ※ 지출품의서이력 시트 A~N 은 PDF 생성(ExpenseRequest.gs)과 공유하고,
 //   O~R(계약번호·회차·저장일시·상세JSON)열은 이 저장 기능이 추가로 사용한다.
+// (속도 v3.19) 예전에는 브라우저가 저장 → 계약 총액 저장 → 이력 다시 조회 를 차례로 3번 요청했음.
+//   이제 한 번의 요청에서 모두 처리:
+//   - p.budgetPatch : 화면에서 고친 계약 총액도 같은 쓰기로 반영 (응답 budgetFields)
+//   - p.returnHistory : 저장 후 이 계약의 회차 이력·정정 이력을 함께 돌려줌 (응답 history/corrections)
+//   - 계약관리 시트는 한 번만 읽음 (예전 3번)
 function apiSaveExpense_(payload) {
   try {
     var p = payload || {};
-    var saved = appendExpenseLogEntry_(p);
+    var contractNo = Number(p.contractNo);
+    var found = contractNo ? findContractByUid_(getDbSheet_(), contractNo) : null;
+    var known = null;
+    if (found) {
+      known = rowToContract_(found.values);
+      known.sheetNo = known.no; known.no = contractNo; known.row = found.row;
+    }
+    var saved = appendExpenseLogEntry_(p, known);
     // 지출품의서에 입력한 설치비/제품대/영업수수료/기타경비를 계약 총액에도 반영
-    // (수기로 추가한 과거 지급이력은 계약 금액을 건드리지 않음)
-    var sync = p.manual ? { ok: true, updated: [] } : syncContractAmountsFromExpense_(Number(p.contractNo), p);
-    return jsonOut_({ ok: true, entry: saved, contractSync: sync });
+    // (수기로 추가한 과거 지급이력은 자동 채움을 하지 않음 — 화면에서 직접 고친 총액만 반영)
+    var hasBudget = p.budgetPatch && Object.keys(p.budgetPatch).length;
+    var sync = (p.manual && !hasBudget) ? { ok: true, updated: [] }
+      : syncContractAmountsFromExpense_(contractNo, p, found, p.budgetPatch);
+    var out = { ok: true, entry: saved, contractSync: sync, budgetFields: (sync && sync.budgetFields) || [] };
+    if (sync && sync.contract) out.contract = sync.contract;
+    if (p.returnHistory) {
+      try {
+        var hist = readExpenseHistoryByContract_(contractNo);
+        out.history = hist.history;
+        out.corrections = hist.corrections;
+      } catch (e) { /* 이력 조회 실패는 저장 결과에 영향 없음 — 화면이 따로 다시 조회 */ }
+    }
+    return jsonOut_(out);
   } catch (err) {
     return errorOut_(err.message, 'SAVE_FAILED');
   }
@@ -1798,16 +1925,19 @@ function getExpenseLogSheet_() {
 // "수정 지급건"으로 인식해서 그 줄을 갱신한다(누적에 새로 더해지지 않음).
 // 회차 번호는 같은데 도급업체가 다르면(예: 회차 채번이 우연히 겹친 경우) 서로 다른
 // 업체의 기록을 실수로 덮어쓰지 않도록 별도의 새 줄로 저장한다.
-function appendExpenseLogEntry_(p) {
+// knownContract: 같은 요청에서 이미 읽은 계약 객체 (있으면 계약 시트 전체를 다시 읽지 않음)
+function appendExpenseLogEntry_(p, knownContract) {
   var contractNo = Number(p.contractNo);
   if (!contractNo) throw new Error('계약 번호가 없습니다.');
   var roundNo = Number(p.roundNo) || 1;
   var amount = Number(p.amount) || 0;
   var prev = Number(p.prevProgress) || 0;
 
-  var contract = null;
-  var all = readContracts_();
-  for (var i = 0; i < all.length; i++) { if (Number(all[i].no) === contractNo) { contract = all[i]; break; } }
+  var contract = knownContract || null;
+  if (!contract) {
+    var all = readContracts_();
+    for (var i = 0; i < all.length; i++) { if (Number(all[i].no) === contractNo) { contract = all[i]; break; } }
+  }
   contract = contract || {};
   var subcontractorName = String(p.subcontractor || contract.subcontractor || '').trim();
 
@@ -1854,25 +1984,23 @@ function appendExpenseLogEntry_(p) {
   var lastRow = sheet.getLastRow();
 
   // 기존 행 찾기
+  // (속도) 상세 JSON 열(R)은 줄마다 수십 KB 라 전체를 읽으면 느림 → A~Q 만 한 번에 읽고
+  //        후보 줄의 JSON 만 따로 확인
   var targetRow = 0, docNo = '';
-  if (lastRow >= 2) {
-    var keys = sheet.getRange(2, 1, lastRow - 1, width).getValues();
-    for (var k = 0; k < keys.length; k++) {
-      var sameContract = Number(keys[k][extCol - 1]) === contractNo;
-      var sameRound = Number(keys[k][extCol]) === roundNo;
-      var isActive = String(keys[k][11]) === '정상';
-      var sameSubcontractor = String(keys[k][4] || '').trim() === subcontractorName;
-      var rowIsManual = /"manual":true/.test(String(keys[k][extCol + 2] || ''));
-      if (p.manual) break;                   // 수기 지급이력은 항상 새 줄
-      if (sameContract && sameRound && isActive && sameSubcontractor && !rowIsManual) {
-        targetRow = k + 2; docNo = keys[k][0]; break;
-      }
-    }
+  var keys = lastRow >= 2 && !p.manual ? sheet.getRange(2, 1, lastRow - 1, width - 1).getValues() : [];
+  for (var k = 0; k < keys.length; k++) {
+    var sameContract = Number(keys[k][extCol - 1]) === contractNo;
+    var sameRound = Number(keys[k][extCol]) === roundNo;
+    var isActive = String(keys[k][11]) === '정상';
+    var sameSubcontractor = String(keys[k][4] || '').trim() === subcontractorName;
+    if (!(sameContract && sameRound && isActive && sameSubcontractor)) continue;
+    var rowIsManual = /"manual":true/.test(String(sheet.getRange(k + 2, width).getValue() || ''));
+    if (!rowIsManual) { targetRow = k + 2; docNo = keys[k][0]; break; }
   }
   // 변경 저장: 화면에서 "이미 저장된 회차를 변경"으로 확인한 경우 그 행을 그대로 덮어씀
   var replaceNo = p.manual ? 0 : (Number(p.replaceNo) || 0);
   if (replaceNo >= 2 && replaceNo <= lastRow) {
-    var rr = sheet.getRange(replaceNo, 1, 1, width).getValues()[0];
+    var rr = keys.length >= replaceNo - 1 ? keys[replaceNo - 2] : sheet.getRange(replaceNo, 1, 1, width - 1).getValues()[0];
     if (Number(rr[extCol - 1]) === contractNo && String(rr[11]) === '정상' && rr[0]) {
       targetRow = replaceNo; docNo = rr[0];
     }
@@ -1892,13 +2020,13 @@ function appendExpenseLogEntry_(p) {
 
   if (targetRow) {
     // PDF 링크·파일ID(M,N열)는 PDF 생성 기능이 채운 값을 보존
-    var keep = sheet.getRange(targetRow, 13, 1, 2).getValues()[0];
+    var keep = keys.length >= targetRow - 1 ? [keys[targetRow - 2][12], keys[targetRow - 2][13]] : sheet.getRange(targetRow, 13, 1, 2).getValues()[0];
     row[12] = keep[0]; row[13] = keep[1];
     sheet.getRange(targetRow, 1, 1, width).setValues([row]);
   } else {
     sheet.appendRow(row);
   }
-  return { docNo: docNo, roundNo: roundNo, updated: !!targetRow, no: targetRow || sheet.getLastRow() };
+  return { docNo: docNo, roundNo: roundNo, updated: !!targetRow, no: targetRow || Math.max(lastRow, 1) + 1 };
 }
 
 // ============================================================
@@ -1933,11 +2061,13 @@ function logChange_(category, target, changes) {
       var after = (c.after === '' || c.after == null) ? '(없음)' : String(c.after);
       return c.label + ': ' + before + ' → ' + after;
     }).join(', ');
-    sheet.appendRow([new Date(), category, target, summary, JSON.stringify(changes)]);
+    // (속도) 마지막 행을 먼저 읽고 쓰기만 이어서 → 쓴 직후 다시 읽느라 기다리지 않음
+    var lastRow = sheet.getLastRow() + 1;
+    sheet.getRange(lastRow, 1, 1, 5).setValues([[new Date(), category, target, summary, JSON.stringify(changes)]]);
 
     // 오래된 기록 정리 (최근 CHANGE_LOG_MAX_ROWS_건만 유지)
-    var lastRow = sheet.getLastRow();
-    if (lastRow > CHANGE_LOG_MAX_ROWS_ + 1) {
+    // (속도) 저장할 때마다 1줄씩 지우지 않고 50건 넘게 쌓이면 한꺼번에 정리
+    if (lastRow > CHANGE_LOG_MAX_ROWS_ + 51) {
       sheet.deleteRows(2, lastRow - (CHANGE_LOG_MAX_ROWS_ + 1));
     }
   } catch (err) {
