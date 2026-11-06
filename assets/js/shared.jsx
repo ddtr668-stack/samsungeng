@@ -110,6 +110,37 @@ const hbHistory = (() => {
   };
 })();
 
+// ═══════════════════════════════════════════════════════════════
+// 리포트 인쇄 — 화면 그대로 A4 가로 (대시보드·미수금 공용, v3.35)
+// usePrintReport() 를 쓴 화면이 열려 있는 동안 body 에 print-dash → 버튼이든 Ctrl+P 든 같은 양식
+// 스타일: app.css 「대시보드 인쇄 — 화면 그대로」
+// ═══════════════════════════════════════════════════════════════
+const usePrintReport = () => {
+  useEffect(() => {
+    document.body.classList.add('print-dash');
+    return () => document.body.classList.remove('print-dash');
+  }, []);
+};
+const _ymd = () => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`; };
+// 인쇄 창 열기 — fileTitle 은 'PDF로 저장' 할 때 파일 이름 (뒤에 날짜 붙음)
+const printReport = (fileTitle) => {
+  const prev = document.title;
+  document.title = `${fileTitle}_${_ymd()}`;
+  const restore = () => { document.title = prev; window.removeEventListener('afterprint', restore); };
+  window.addEventListener('afterprint', restore);
+  window.print();
+};
+// 인쇄할 때만 보이는 머리줄: 왼쪽에 조건, 오른쪽에 출력 시각
+const PrintHead = ({ children }) => {
+  const d = new Date(); const p = n => String(n).padStart(2,'0');
+  return (
+    <div className="print-head">
+      <span>{typeof getSheetName === 'function' ? getSheetName() : '계약관리'} · {children}</span>
+      <span>출력 {`${d.getFullYear()}.${p(d.getMonth()+1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`}</span>
+    </div>
+  );
+};
+
 // 모달 안에 넣어 두면: 열려 있는 동안 뒤로가기 = 이 모달 닫기
 // <BackClose onClose={onClose}/> — 모달이 화면에 있을 때만 렌더되는 위치에 둘 것
 const BackClose = ({ onClose }) => {
@@ -619,7 +650,7 @@ const CardHead = ({ title, sub, right }) => (
 
 // Global export
 Object.assign(window, {
-  backdropClose, hbHistory, BackClose,
+  backdropClose, hbHistory, BackClose, usePrintReport, printReport, PrintHead,
   useState, useEffect, useMemo, useRef, useCallback, Fragment,
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,
   Icon, Sidebar, Topbar, usePagination, Pager,
