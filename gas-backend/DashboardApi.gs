@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-10-30-01 (저장 속도 개선)';
+var BUILD_VERSION_ = '2026-11-06-01 (진행상태 자동)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -437,20 +437,45 @@ function applyContractPatch_(no, patch, categoryLabel, preFound) {
   return { ok: true, updated: updated, contract: contract };
 }
 
+// ─── 한 번만 실행: 시트의 진행상태·진행율 칸을 체크박스에 맞춰 일괄 정리 ───
+// Apps Script 편집기에서 함수 목록 → syncAllContractStatus → [실행]
+// (사이트 화면은 이 함수를 돌리지 않아도 이미 체크 기준으로 보여 줌. 시트를 직접 보거나 피벗에 쓸 때 정리용)
+function syncAllContractStatus() {
+  var sheet = getDbSheet_();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START_ROW) return '계약 없음';
+  var n = lastRow - DATA_START_ROW + 1;
+  var rows = sheet.getRange(DATA_START_ROW, 1, n, DB_LAST_COL_).getValues();
+  var statusVals = [], progVals = [], changed = 0;
+  rows.forEach(function (r) {
+    var hasRow = r[COL_MAP_.projectName - 1] !== '' || r[COL_MAP_.client - 1] !== '';
+    var st = hasRow ? deriveStatus_(r) : r[COL_MAP_.status - 1];
+    var pg = hasRow ? countChecks_(r) / 5 : r[COL_MAP_.progress - 1];
+    if (hasRow && (String(st) !== String(r[COL_MAP_.status - 1]) || Number(pg) !== Number(r[COL_MAP_.progress - 1]))) changed++;
+    statusVals.push([st]); progVals.push([pg]);
+  });
+  sheet.getRange(DATA_START_ROW, COL_MAP_.status, n, 1).setValues(statusVals);
+  sheet.getRange(DATA_START_ROW, COL_MAP_.progress, n, 1).setValues(progVals);
+  var msg = '진행상태·진행율 정리 완료: ' + changed + '건 바뀜';
+  Logger.log(msg);
+  try { logChange_('진행상태 일괄 정리', '전체 계약', [{ field: 'status', label: '진행상태', before: '', after: msg }]); } catch (e) {}
+  return msg;
+}
+
 // 잔금·기성잔액·이윤·마진율·진행률 — 행 값 배열로 계산 → { 열번호: 값 }
 function computeDerivedFields_(r) {
   var n = function (col) { return Number(r[col - 1]) || 0; };
   var total = n(COL_MAP_.totalAmount), paid = n(COL_MAP_.paidAmount);
   var subA = n(COL_MAP_.subcontractAmount), subP = n(COL_MAP_.subcontractPaid);
   var profit = total - n(COL_MAP_.productCost) - subA - n(COL_MAP_.incidental) - n(COL_MAP_.salesCost);
-  var isOn = function (col) { var x = r[col - 1]; return x === true || x === 'TRUE' || x === 1; };
-  var done = [COL_MAP_.chk배관, COL_MAP_.chk실내기, COL_MAP_.chk실외기, COL_MAP_.chk시운전, COL_MAP_.chk인수인계].filter(isOn).length;
+  var done = countChecks_(r);
   var out = {};
   out[COL_MAP_.balance] = total - paid;
   out[COL_MAP_.subcontractBalance] = subA - subP;
   out[COL_MAP_.profit] = profit;
   out[COL_MAP_.marginRate] = total > 0 ? profit / total : 0;
   out[COL_MAP_.progress] = done / 5;
+  out[COL_MAP_.status] = deriveStatus_(r);   // 진행상태 칸도 체크에 맞춰 함께 갱신
   return out;
 }
 
@@ -882,6 +907,29 @@ function findContractByUid_(sheet, uid) {
   return null;
 }
 
+// ─── 공사 진행 체크 · 진행상태 (2026-11-06) ───
+// 체크 칸에는 체크박스(TRUE) 말고도 예전에 손으로 적은 '완료'·'O'·'✓' 등이 섞여 있음 → 모두 체크로 봄
+function isCheckedVal_(v) {
+  if (v === true || v === 1) return true;
+  var t = String(v == null ? '' : v).trim().toUpperCase();
+  return t === 'TRUE' || t === '1' || t === '완료' || t === 'O' || t === '○' || t === 'V' || t === 'Y' || t === '✓' || t === '✔' || t === '☑';
+}
+var CHECK_COLS_ = function () { return [COL_MAP_.chk배관, COL_MAP_.chk실내기, COL_MAP_.chk실외기, COL_MAP_.chk시운전, COL_MAP_.chk인수인계]; };
+function countChecks_(row) {
+  return CHECK_COLS_().filter(function (col) { return isCheckedVal_(row[col - 1]); }).length;
+}
+// 진행상태 = 체크박스로 자동: 5개 모두 → 완료 · 1~4개 → 진행중 · 0개 → 시트에 적힌 값(없으면 미진행)
+// (예전: '진행상태' 칸을 손으로 적어야 해서 체크를 다 해도 '미진행'으로 남는 등 어긋났음)
+// 체크가 하나도 없는 옛 계약은 손으로 적은 '완료'를 그대로 둠 — 과거 완료 공사가 미진행으로 바뀌지 않도록
+function deriveStatus_(row) {
+  var done = countChecks_(row);
+  if (done >= 5) return '완료';
+  if (done > 0) return '진행중';
+  var manual = String(row[COL_MAP_.status - 1] == null ? '' : row[COL_MAP_.status - 1]).replace(/\s+/g, '');
+  if (manual === '완료' || manual === '진행중' || manual === '미진행') return manual;
+  return '미진행';
+}
+
 function rowToContract_(row) {
   var date = row[COL_MAP_.contractDate - 1];
   var iso = null;
@@ -900,7 +948,7 @@ function rowToContract_(row) {
   var productCostCell = row[COL_MAP_.productCost - 1];
   var productCostNum = Number(productCostCell);
 
-  function toBool(v){ return v === true || v === 'TRUE' || v === 1 || v === '1'; }
+  var toBool = isCheckedVal_;
 
   return {
     no: Number(row[COL_MAP_.no - 1]) || 0,
@@ -924,8 +972,8 @@ function rowToContract_(row) {
     salesCost: Number(row[COL_MAP_.salesCost - 1]) || 0,
     profit: profit,
     marginRate: marginRate,
-    status: row[COL_MAP_.status - 1] || '미입력',
-    progress: Number(row[COL_MAP_.progress - 1]) || 0,
+    status: deriveStatus_(row),
+    progress: countChecks_(row) / 5,   // 시트의 진행율 칸 대신 체크로 계산 ('완료' 글자 체크도 반영)
     checks: {
       배관: toBool(row[COL_MAP_.chk배관 - 1]),
       실내기: toBool(row[COL_MAP_.chk실내기 - 1]),

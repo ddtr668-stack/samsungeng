@@ -410,7 +410,10 @@ const ScreenDetail = ({ data, contractNo, onBack, onOpenExpense, onOpenSubcontra
   const doneCount = CHECK_KEYS.filter(k => checks[k]).length;
   const localProgress = doneCount / CHECK_KEYS.length;
 
-  const c = { ...baseContract, checks, progress: localProgress };
+  // 체크를 바꾸면 진행상태 표시도 바로 따라감 (완료/진행중/미진행)
+  const c = typeof normalizeContractStatus === 'function'
+    ? normalizeContractStatus({ ...baseContract, checks })
+    : { ...baseContract, checks, progress: localProgress };
   const paidPct = c.totalAmount > 0 ? c.paidAmount / c.totalAmount : 0;
 
   // 단계 선택: 화면에서만 바꾸고, [저장] 을 눌러야 한 번에 저장

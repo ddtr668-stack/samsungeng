@@ -180,7 +180,9 @@ const App = () => {
           if (checkDates || fields.checkDates) next.checkDates = checkDates || fields.checkDates;
           return next;
         });
-        return hit ? { ...d, contracts } : d;
+        if (!hit) return d;
+        const next = { ...d, contracts };
+        return typeof recountStatus === 'function' ? recountStatus(next) : next;
       });
     };
     window.addEventListener('hb:contract-updated', onUpdated);
