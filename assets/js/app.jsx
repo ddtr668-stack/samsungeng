@@ -262,8 +262,8 @@ const App = () => {
   );
   if (!data) return null;
 
-  // 담당자별 보기는 관리자 전용 (관리자가 아니면 목록·선택 칸을 숨기고 항상 '전체' 기준)
-  const adminView = typeof isAdmin === 'function' && isAdmin();
+  // 담당자별 보기: 전체 계약을 보는 사용자(관리자·조회·'본인 담당만'이 꺼진 편집)만 — 본인 담당만 보는 사용자는 숨기고 항상 '전체' 기준
+  const adminView = typeof seesAllContracts === 'function' ? seesAllContracts() : (typeof isAdmin === 'function' && isAdmin());
   const managerStats = !adminView ? [] : (() => {
     const m = {};
     userNames.forEach(n => { m[n] = m[n] || 0; });
