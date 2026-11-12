@@ -13,7 +13,7 @@
 //   - 누구나 로그인 화면의 "회원가입"으로 신청 (아이디·비밀번호·이름·전화번호·부서명)
 //   - 관리자가 설정 → 사용자 관리에서 승인하고 권한을 지정해야 로그인 가능
 //   - 권한: admin(관리자) · editor(편집) · viewer(조회)
-//           + ownOnly: 본인이 담당자인 계약만 보기/수정
+//           + ownOnly: 본인이 담당자인 계약만 보기/수정 (편집 권한에만 적용 — 조회 권한은 항상 전체 보기)
 //
 // ▶ 계약 담당자: 스프레드시트의 "계약담당자" 시트 (계약번호 · 담당자 · 담당자번호)
 //   자동 생성되며, 기존 계약은 모두 SG_DEFAULT_MANAGER_ 로 채워집니다.
@@ -118,7 +118,7 @@ function SG_publicUser_(u) {
   return {
     id: u.id, name: u.name || '', phone: u.phone || '', dept: u.dept || '',
     role: u.role || 'viewer', roleLabel: SG_ROLES_[u.role] || '조회',
-    ownOnly: !!u.ownOnly, status: u.status || 'pending', createdAt: u.createdAt || ''
+    ownOnly: SG_isOwnOnly_(u), status: u.status || 'pending', createdAt: u.createdAt || ''
   };
 }
 
@@ -181,9 +181,14 @@ function SG_checkPermission_(route, user) {
   return null;
 }
 
+// 본인 담당만 보기: 편집 권한 + ownOnly 일 때만 (관리자·조회 권한은 전체 계약을 봄)
+function SG_isOwnOnly_(user) {
+  return !!(user && user.ownOnly && user.role === 'editor');
+}
+
 // ownOnly 사용자가 다른 담당자의 계약에 접근하는지 확인
 function SG_canAccessContract_(user, contractNo) {
-  if (!user.ownOnly || user.role === 'admin') return true;
+  if (!SG_isOwnOnly_(user)) return true;
   var no = Number(contractNo);
   if (!no) return true;
   return SG_getManagerOf_(no) === (user.name || '');
@@ -303,7 +308,7 @@ function SG_applyManagers_(contracts, user) {
     c.managerNo = m.seq;
     c.managerCode = m.seq ? SG_managerCode_(m.name, m.seq) : '';
   });
-  if (user && user.ownOnly && user.role !== 'admin') {
+  if (SG_isOwnOnly_(user)) {
     return contracts.filter(function (c) { return c.manager === (user.name || ''); });
   }
   return contracts;
