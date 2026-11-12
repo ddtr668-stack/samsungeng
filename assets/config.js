@@ -5,5 +5,5 @@
    - 로그인 없이 데이터를 볼 수는 없습니다 (Apps Script 가 로그인 토큰을 확인).
 ═══════════════════════════════════════════════════════════════ */
 window.APP_CONFIG = {
-  apiUrl: 'https://script.google.com/macros/s/AKfycbz0Lwc5lyIlKyWAf__yk6rU-XpjLUuloUov9qDI3iubAOUKXZy0w2RzriFw7yxrld71MQ/exec',
+  apiUrl: 'https://script.google.com/macros/s/AKfycbyJAyiQ4nDx9z5fF8fJf3hm6-H22OFnWpfq4Yu3zwcJdTvq8wCMp_HOI98AfU_iGWMy8w/exec',
 };
