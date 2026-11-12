@@ -135,13 +135,6 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
           </>
         )}
 
-        {!showUrl && (
-          <div style={{marginTop:10,fontSize:11.5,color:'var(--ink-4)',textAlign:'right'}}>
-            <span title={getApiUrl()}>연결 서버 {shortApiUrl(getApiUrl())}{getApiUrl() !== getConfigApiUrl() ? ' (이 브라우저 전용)' : ''} · </span>
-            <a href="#" onClick={e => { e.preventDefault(); setShowUrl(true); }} style={{color:'inherit'}}>서버 주소 변경</a>
-          </div>
-        )}
-
         {notice && (
           <div style={{marginTop:14,padding:'10px 12px',borderRadius:8,background:'var(--pos-soft)',color:'var(--pos)',fontSize:12.5,whiteSpace:'pre-wrap'}}>
             {notice}
