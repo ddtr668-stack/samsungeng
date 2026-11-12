@@ -64,6 +64,8 @@ const isLoggedIn = () => !!getAuthToken();
 // 권한 확인 (화면 표시용 · 실제 권한 검사는 Apps Script 에서)
 const isAdmin = () => (getAuthUser() || {}).role === 'admin';
 const canEdit = () => { const r = (getAuthUser() || {}).role; return r === 'admin' || r === 'editor'; };
+// 전체 계약을 보는 사용자 (관리자 · 조회 · '본인 담당만'이 꺼진 편집) → 담당자별 보기 사용 가능
+const seesAllContracts = () => { const u = getAuthUser() || {}; return u.role === 'admin' || !(u.role === 'editor' && u.ownOnly); };
 
 // ─── 공용 설정 (서버에 저장 → 어느 브라우저에서 로그인해도 동일) ───
 const SYNCED_SETTINGS = {
@@ -364,6 +366,7 @@ Object.assign(window, {
   isLoggedIn,
   isAdmin,
   canEdit,
+  seesAllContracts,
   pushAppSettings,
   hasApiUrl,
   getSheetUrl,
