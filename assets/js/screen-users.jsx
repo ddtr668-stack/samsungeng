@@ -6,7 +6,7 @@
 const USER_ROLE_OPTIONS = [
   { value:'admin',  label:'관리자', desc:'모든 기능 + 사용자·설정 관리' },
   { value:'editor', label:'편집',   desc:'계약·수금·지출 조회 및 등록/수정' },
-  { value:'viewer', label:'조회',   desc:'조회만 가능' },
+  { value:'viewer', label:'조회',   desc:'전체 계약 조회 (등록·수정 불가)' },
 ];
 const USER_STATUS_LABEL = { pending:'승인 대기', active:'사용 중', disabled:'사용 중지' };
 
@@ -119,7 +119,8 @@ const UserManagement = () => {
                     </select>
                   </td>
                   <td style={{...cell,textAlign:'center'}}>
-                    <input type="checkbox" checked={!!u.ownOnly} disabled={busy || u.role === 'admin'}
+                    <input type="checkbox" checked={u.role === 'editor' && !!u.ownOnly} disabled={busy || u.role !== 'editor'}
+                      title={u.role === 'editor' ? '' : '관리자·조회 권한은 항상 전체 계약을 봅니다'}
                       onChange={e => update(u, { ownOnly: e.target.checked }, e.target.checked ? '본인 담당 계약만 보이게 했습니다' : '전체 계약이 보이게 했습니다')}/>
                   </td>
                   <td style={{...cell,textAlign:'right'}}>
