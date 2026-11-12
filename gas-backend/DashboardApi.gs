@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-11-06-01 (진행상태 자동)';
+var BUILD_VERSION_ = '2026-11-12-01 (조회 권한 전체 보기)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -120,7 +120,7 @@ function handleRequest_(e, method) {
       case 'contractItems':      return apiGetContractItems_(params.contractNo || payload.contractNo);
       case 'saveContractItems':  return apiSaveContractItems_(payload, user);
       // ─── 신규: 변경 이력 조회 ───
-      case 'changeLog':     return (user.ownOnly && user.role !== 'admin') ? jsonOut_({ ok:true, log:[] }) : apiChangeLog_();
+      case 'changeLog':     return SG_isOwnOnly_(user) ? jsonOut_({ ok:true, log:[] }) : apiChangeLog_();
       // ─── 신규: 자동 백업(30일 보관) ───
       case 'backupSettings':     return apiGetBackupSettings_();
       case 'saveBackupSettings': return apiSaveBackupSettings_(payload);
@@ -145,7 +145,7 @@ function apiBootstrap_(user) {
   var clients = readClients_();
   var subcontractors = readSubcontractors_();
   var expenseHistory = readExpenseHistory_();
-  if (user && user.ownOnly && user.role !== 'admin') {
+  if (SG_isOwnOnly_(user)) {
     var ownSites = {};
     contracts.forEach(function (c) { ownSites[c.projectName] = true; });
     expenseHistory = expenseHistory.filter(function (h) { return ownSites[String(h.site || '').trim()]; });
