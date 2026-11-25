@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-11-12-01 (조회 권한 전체 보기)';
+var BUILD_VERSION_ = '2026-11-25-01 (지출품의서 옛 회차 연결 복구 · 업체 저장 분리)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -266,6 +266,7 @@ function getContractItemsSheet_() {
 function apiGetContractItems_(contractNo) {
   contractNo = Number(contractNo);
   if (!contractNo) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
+  runOneTimeRepairs_();
   var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONTRACT_ITEMS_SHEET_);
   var items = {}, savedAt = {};
   if (sh && sh.getLastRow() >= 2) {
@@ -1206,12 +1207,16 @@ function apiSaveSubcontractor_(payload) {
     var oldRow = null;
     if (lastRow >= 2 && C.name >= 0) {
       var vals = sheet.getRange(2, 1, lastRow - 1, reg.width).getValues();
+      // 같은 업체명 줄을 먼저 찾고, 없을 때만 사업자번호로 찾음 (업체명을 고친 경우)
+      // (예전: 사업자번호가 같으면 이름이 다른 업체 줄을 먼저 찾아 그 업체 이름·정보를 바꿔버림)
+      var byBiz = 0;
       for (var i = 0; i < vals.length; i++) {
         var rowBizNo = C.bizNo >= 0 ? String(vals[i][C.bizNo] || '').trim() : '';
         var rowName = C.name >= 0 ? String(vals[i][C.name] || '').trim() : '';
-        if (bizNo && rowBizNo && rowBizNo === bizNo) { targetRow = i + 2; oldRow = vals[i]; break; }
-        if (!bizNo && rowName && _gNorm_(rowName) === nk) { targetRow = i + 2; oldRow = vals[i]; break; }
+        if (rowName && _gNorm_(rowName) === nk) { targetRow = i + 2; oldRow = vals[i]; break; }
+        if (!byBiz && bizNo && rowBizNo && rowBizNo === bizNo) byBiz = i + 2;
       }
+      if (!targetRow && byBiz) { targetRow = byBiz; oldRow = vals[byBiz - 2]; }
     }
     var setCol = function (row, idx, val) { if (idx >= 0 && val !== undefined && val !== null) sheet.getRange(row, idx + 1).setValue(val); };
     if (targetRow) {
@@ -1261,12 +1266,14 @@ function apiSaveSubcontractor_(payload) {
     var ptargetRow = 0;
     if (plastRow >= 2) {
       var pvals = psheet.getRange(2, 1, plastRow - 1, 12).getValues();
+      var pByBiz = 0;
       for (var j = 0; j < pvals.length; j++) {
         var pRowBizNo = String(pvals[j][0] || '').trim();
         var pRowName = String(pvals[j][1] || '').trim();
-        if (bizNo && pRowBizNo && pRowBizNo === bizNo) { ptargetRow = j + 2; break; }
-        if (!bizNo && pRowName && _gNorm_(pRowName) === nk) { ptargetRow = j + 2; break; }
+        if (pRowName && _gNorm_(pRowName) === nk) { ptargetRow = j + 2; break; }
+        if (!pByBiz && bizNo && pRowBizNo && pRowBizNo === bizNo) pByBiz = j + 2;
       }
+      if (!ptargetRow && pByBiz) ptargetRow = pByBiz;
     }
     var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
     if (ptargetRow) {
@@ -1609,6 +1616,7 @@ function syncContractPaidAmount_(contractNo) {
 function apiExpenseHistoryByContract_(contractNo) {
   contractNo = Number(contractNo);
   if (!contractNo) return errorOut_('계약 번호가 필요합니다.', 'BAD_PARAM');
+  runOneTimeRepairs_();   // 옛 계약번호 기록 바로잡기 (배포 후 한 번만)
   var res;
   try { res = readExpenseHistoryByContract_(contractNo); }
   catch (err) { return errorOut_('지출품의서 이력 조회 실패: ' + err.message, 'HISTORY_FAILED'); }
@@ -1761,6 +1769,197 @@ function apiCancelExpenseRound_(payload) {
   } catch (err) {
     return errorOut_(err.message, 'CANCEL_FAILED');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  옛 계약번호로 저장된 기록 바로잡기 (2026-11-25)
+// ═══════════════════════════════════════════════════════════════
+// 고유ID(2026-09-30) 도입 전에는 계약관리 시트의 NO 를 그대로 키로 썼다. 그 사이 시트의 행을
+// 지우면서 NO 가 한 칸씩 당겨졌고, 고유ID 는 '당겨진 뒤의 NO' 로 매겨졌다.
+// 그래서 그 전에 저장한 지출품의서·내역서가 옛 번호에 남아
+//   - 원래 프로젝트에서는 사라지고 (예: 세미산업 AHU공사 1차 → 옛 번호 106)
+//   - 지금 그 번호를 가진 다른 프로젝트에 끼어 보였다 (예: 106 = 가정용 스텐드 냉방기 납품)
+// 현장명(지출품의서이력 C열)·내역서 파일명으로 원래 프로젝트를 찾아 지금의 고유ID 로 옮긴다.
+//  - 현장명이 지금 계약과 같으면 건드리지 않음 · 같은 현장명 계약이 둘 이상이면 건드리지 않음
+//  - 옮긴 옛 기록과 같은 회차에 더 최근 '정상' 기록이 있으면 옛 기록은 '취소됨'(중복 집계 방지,
+//    L열을 '정상'으로 바꾸면 되살아남)
+//  - 바꾼 내용은 모두 변경이력 시트에 남김
+// 자동: 새 버전 배포 후 지출품의서·내역서를 처음 열 때 한 번 실행 (스크립트 속성에 완료 표시)
+// 수동: Apps Script 편집기에서 previewOrphanRecordRepair (미리보기) / applyOrphanRecordRepair (적용)
+var ORPHAN_REPAIR_KEY_ = 'repairOrphanContractRecords_v1';
+
+function previewOrphanRecordRepair() {
+  var r = repairOrphanContractRecords_(true);
+  Logger.log(JSON.stringify(r, null, 2));
+  return r;
+}
+function applyOrphanRecordRepair() {
+  var r = repairOrphanContractRecords_(false);
+  PropertiesService.getScriptProperties().setProperty(ORPHAN_REPAIR_KEY_, new Date().toISOString());
+  Logger.log(JSON.stringify(r, null, 2));
+  return r;
+}
+
+function runOneTimeRepairs_() {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty(ORPHAN_REPAIR_KEY_)) return;
+    var lock = LockService.getScriptLock();
+    if (!lock.tryLock(20000)) return;
+    try {
+      if (props.getProperty(ORPHAN_REPAIR_KEY_)) return;
+      repairOrphanContractRecords_(false);
+      props.setProperty(ORPHAN_REPAIR_KEY_, new Date().toISOString());
+    } finally { lock.releaseLock(); }
+  } catch (e) {
+    Logger.log('runOneTimeRepairs_ 실패: ' + e.message);
+  }
+}
+
+// 시트 값(Date 또는 "2026-09-21 22:29:06" / "2026. 9. 27 오후 7:55:44") → ms (모르면 0)
+function repairTime_(v) {
+  if (v instanceof Date) return v.getTime();
+  var s = String(v || '').trim();
+  var m = s.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D*?(오전|오후)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return 0;
+  var h = Number(m[5]);
+  if (m[4] === '오후' && h < 12) h += 12;
+  if (m[4] === '오전' && h === 12) h = 0;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), h, Number(m[6]), Number(m[7] || 0)).getTime();
+}
+
+function repairOrphanContractRecords_(dryRun) {
+  var norm = function (s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); };
+  var contracts = readContracts_();
+  var nameOf = {}, uidsByName = {}, names = [];
+  contracts.forEach(function (c) {
+    var n = norm(c.projectName);
+    nameOf[c.no] = n;
+    if (!n) return;
+    if (!uidsByName[n]) { uidsByName[n] = []; names.push(n); }
+    uidsByName[n].push(c.no);
+  });
+  var uidOfName = function (n) { var l = uidsByName[n]; return l && l.length === 1 ? l[0] : 0; };
+  var report = { dryRun: !!dryRun, expense: [], cancelled: [], items: [], itemsSkipped: [], corrections: [] };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var logChanges = [];
+
+  // ① 지출품의서이력 — C열 현장명으로 판단
+  var oldNoLastUse = {};   // 옛 번호 → { to, t: 그 번호로 마지막 저장한 시각 }
+  var movedRows = {};      // 시트 행번호 → { from, to }
+  var log = ss.getSheetByName(expenseLogName_());
+  if (log && log.getLastRow() >= 2 && log.getLastColumn() >= EXPENSE_EXT_FIRST_COL_ + 2) {
+    var n = log.getLastRow() - 1;
+    var NO = EXPENSE_EXT_FIRST_COL_ - 1, RD = EXPENSE_EXT_FIRST_COL_, SV = EXPENSE_EXT_FIRST_COL_ + 1;
+    var vals = log.getRange(2, 1, n, EXPENSE_EXT_FIRST_COL_ + 2).getValues();   // A~Q
+    var nos = vals.map(function (r) { return [r[NO]]; });
+    for (var i = 0; i < n; i++) {
+      var r = vals[i];
+      var cur = Number(r[NO]) || 0;
+      var site = norm(r[2]);
+      if (!r[0] || !cur || !site || nameOf[cur] === site) continue;
+      var to = uidOfName(site);
+      if (!to || to === cur) continue;
+      nos[i][0] = to;
+      movedRows[i + 2] = { from: cur, to: to };
+      var t = repairTime_(r[SV]);
+      var k = cur + '>' + to;
+      if (!oldNoLastUse[k] || oldNoLastUse[k].t < t) oldNoLastUse[k] = { from: cur, to: to, t: t };
+      report.expense.push({ row: i + 2, docNo: r[0], site: String(r[2]), round: r[RD], status: r[11], from: cur, to: to });
+      logChanges.push({ label: '지출품의서이력 ' + (i + 2) + '행 ' + String(r[2]).trim() + ' ' + r[RD] + '차', before: cur, after: to });
+    }
+    // 옮긴 '정상' 기록과 같은 계약·같은 회차에 더 최근 '정상' 기록이 있으면 옛 기록은 취소
+    var cancelRows = [];
+    Object.keys(movedRows).forEach(function (rowStr) {
+      var row = Number(rowStr), a = vals[row - 2];
+      if (String(a[11]) !== '정상') return;
+      var ta = repairTime_(a[SV]);
+      for (var j = 0; j < n; j++) {
+        if (j === row - 2 || !vals[j][0] || String(vals[j][11]) !== '정상') continue;
+        if (Number(nos[j][0]) !== movedRows[row].to || Number(vals[j][RD]) !== Number(a[RD])) continue;
+        if (repairTime_(vals[j][SV]) > ta) { cancelRows.push(row); break; }
+      }
+    });
+    cancelRows.forEach(function (row) {
+      var a = vals[row - 2];
+      report.cancelled.push({ row: row, docNo: a[0], site: String(a[2]), round: a[RD], subcontractor: String(a[4]), amount: a[5] });
+      logChanges.push({ label: '지출품의서이력 ' + row + '행 ' + String(a[2]).trim() + ' ' + a[RD] + '차 (같은 회차 최근 기록 있음)', before: '정상', after: '취소됨' });
+    });
+    if (!dryRun && report.expense.length) {
+      log.getRange(2, EXPENSE_EXT_FIRST_COL_, n, 1).setValues(nos);
+      cancelRows.forEach(function (row) { log.getRange(row, 12).setValue('취소됨'); });
+    }
+  }
+
+  // ② 기성정정이력 — 옮긴 지출품의서 줄(시트행)을 가리키는 정정 기록도 같이
+  var corr = ss.getSheetByName(typeof CORRECTION_SHEET_NAME_ !== 'undefined' ? CORRECTION_SHEET_NAME_ : '기성정정이력');
+  if (corr && corr.getLastRow() >= 2 && Object.keys(movedRows).length) {
+    var cn = corr.getLastRow() - 1;
+    var cv = corr.getRange(2, 1, cn, 6).getValues();
+    var cnos = cv.map(function (r) { return [r[1]]; });
+    var cChanged = false;
+    for (var q = 0; q < cn; q++) {
+      var mv = movedRows[Number(cv[q][5])];
+      if (!mv || Number(cv[q][1]) !== mv.from) continue;
+      cnos[q][0] = mv.to; cChanged = true;
+      report.corrections.push({ row: q + 2, from: mv.from, to: mv.to });
+      logChanges.push({ label: '기성정정이력 ' + (q + 2) + '행', before: mv.from, after: mv.to });
+    }
+    if (!dryRun && cChanged) corr.getRange(2, 2, cn, 1).setValues(cnos);
+  }
+
+  // ③ 계약내역서 — 내역 JSON 의 파일명·현장명으로 판단, 이름이 없는 줄은
+  //    지출품의서이력에서 확인된 '옛 번호 → 새 번호' 중 옛 번호를 마지막으로 쓴 시각 이전에 저장된 것만
+  var items = ss.getSheetByName(CONTRACT_ITEMS_SHEET_);
+  if (items && items.getLastRow() >= 2) {
+    var inN = items.getLastRow() - 1;
+    var iv = items.getRange(2, 1, inN, 4).getValues();
+    var inos = iv.map(function (r) { return [r[0]]; });
+    var have = {};
+    iv.forEach(function (r) { have[Number(r[0]) + '|' + r[1]] = true; });
+    var siteOfJson = function (txt) {
+      var o; try { o = JSON.parse(txt || '{}') || {}; } catch (e) { return ''; }
+      var cands = [o.filename, o.terms && o.terms.siteName, o.subcontractTerms && o.subcontractTerms.siteName]
+        .map(norm).filter(Boolean);
+      var best = '';
+      cands.forEach(function (c) { names.forEach(function (nm) { if (nm.length > best.length && c.indexOf(nm) >= 0) best = nm; }); });
+      return best;
+    };
+    var plan = [];
+    for (var x = 0; x < inN; x++) {
+      var curNo = Number(iv[x][0]) || 0;
+      if (!curNo) continue;
+      var kind = String(iv[x][1] || '');
+      var named = siteOfJson(iv[x][2]);
+      var target = 0, why = '';
+      if (named) {
+        if (named === nameOf[curNo]) continue;
+        // 파일명에 지금 계약의 현장명도 들어 있으면(이름이 서로 포함되는 경우) 그대로 둠
+        if (nameOf[curNo] && String(iv[x][2]).replace(/\s+/g, '').toLowerCase().indexOf(nameOf[curNo]) >= 0) continue;
+        target = uidOfName(named); why = '파일명';
+      } else {
+        var tx = repairTime_(iv[x][3]);
+        Object.keys(oldNoLastUse).forEach(function (k) {
+          var u = oldNoLastUse[k];
+          if (u.from === curNo && tx && u.t && tx <= u.t) { target = u.to; why = '옛 번호 사용 기간'; }
+        });
+      }
+      if (!target || target === curNo) continue;
+      plan.push({ x: x, from: curNo, to: target, kind: kind, why: why });
+    }
+    var iChanged = false;
+    plan.forEach(function (p) {
+      if (have[p.to + '|' + p.kind]) { report.itemsSkipped.push({ row: p.x + 2, from: p.from, to: p.to, kind: p.kind, reason: '새 번호에 같은 구분 내역이 이미 있음' }); return; }
+      have[p.to + '|' + p.kind] = true;
+      inos[p.x][0] = p.to; iChanged = true;
+      report.items.push({ row: p.x + 2, from: p.from, to: p.to, kind: p.kind, by: p.why });
+      logChanges.push({ label: '계약내역서 ' + (p.x + 2) + '행 ' + p.kind, before: p.from, after: p.to });
+    });
+    if (!dryRun && iChanged) items.getRange(2, 1, inN, 1).setValues(inos);
+  }
+
+  if (!dryRun && logChanges.length) logChange_('기록 연결 복구', '옛 계약번호 → 고유ID', logChanges);
+  return report;
 }
 
 var EXPENSE_EXT_FIRST_COL_ = 15;   // O열
