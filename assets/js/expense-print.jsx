@@ -128,6 +128,23 @@ tr.cur td { font-weight: 700; }
 .detail-title .s { font-size:9pt; color:#555; margin-top:1.5mm; }
 .detail-page { page-break-before: always; break-before: page; }
 
+/* ─── 증빙 별첨 (A안: 한 쪽에 2건) ─── */
+.att-page { page-break-before: always; break-before: page; }
+.att-head { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1.5pt solid #000; padding-bottom:1.5mm; margin-bottom:3mm; }
+.att-head .t { font-size:13pt; font-weight:800; letter-spacing:0.12em; }
+.att-head .s { font-size:8.5pt; }
+.att-slot { margin-top:3mm; break-inside:avoid; page-break-inside:avoid; }
+.att-slot:first-of-type { margin-top:0; }
+table.att-cap th { width:13mm; font-size:8.5pt; }
+table.att-cap th.no { width:16mm; font-size:10pt; }
+table.att-cap td { font-size:8.5pt; }
+table.att-cap td.qr { width:17mm; padding:0.6mm; text-align:center; }
+table.att-cap td.qr img { width:15mm; height:15mm; display:block; margin:0 auto; }
+.att-img { height:104mm; border:0.6pt solid #000; border-top:0; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#fff; }
+.att-img img { max-width:100%; max-height:104mm; display:block; }
+.att-miss { text-align:center; font-size:9pt; color:#444; line-height:1.6; padding:0 8mm; }
+.att-foot { margin-top:2.5mm; border-top:0.6pt solid #000; padding-top:1mm; font-size:8pt; color:#444; }
+
 /* ─── v3.17 · 결재란 · 자금 확인 · 항목별 기성 누계 ─── */
 .doc-head { display:flex; align-items:flex-end; justify-content:space-between; gap:6mm; border-bottom:2.25pt solid #000; padding-bottom:2mm; margin:0 0 2.5mm; }
 .doc-head .doc-title { border-bottom:0; padding:0 0 1mm 0.5em; margin:0; text-align:left; flex:1; }
@@ -362,27 +379,6 @@ function buildExpensePrintHtml(d) {
     </table>`;
 
   // ── 영업수수료 / 기타비용 내역 (항목/단위/수량/금액/비고 공통 양식) ──
-  const simpleItemsTable = (items, totalLabel, remarkWidthMm) => {
-    const rows = (items || []).filter(r => r.name);
-    const sum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-    return `<table style="margin-top:2mm">
-      <colgroup><col style="width:9mm"><col style="width:36mm"><col style="width:16mm"><col style="width:14mm"><col style="width:30mm"><col style="width:${remarkWidthMm}mm"></colgroup>
-      <thead><tr><th>No</th><th>항목</th><th>단위</th><th>수량</th><th>금액(원)</th><th>비고</th></tr></thead>
-      <tbody>
-        ${rows.length ? rows.map((r, i) => `<tr>
-            <td class="c">${i + 1}</td>
-            <td class="l">${_pEsc(r.name)}</td>
-            <td class="c">${_pEsc(r.unit)}</td>
-            <td class="r">${r.qty ? _pNum(r.qty) : ''}</td>
-            <td class="r">${_pNum(r.amount)}</td>
-            <td class="l">${_pEsc(r.note)}${r.receipt ? ' (증빙 첨부)' : ''}</td>
-          </tr>`).join('') : `<tr><td class="c" colspan="6">입력된 내역이 없습니다</td></tr>`}
-        <tr class="total"><td class="c" colspan="4">${totalLabel}</td><td class="r">${_pNum(sum)}</td><td></td></tr>
-      </tbody>
-    </table>`;
-  };
-  const commissionItemsTable = simpleItemsTable(d.commissionItems, '합 계', 68);
-  const etcItemsTable = simpleItemsTable(d.etcItems, '합계(VAT포함)', 81);
 
   // ── 손익 계산 : 총계약금액 − 설치비 − 제품대 − 기타비용 − 영업수수료 ──
   const pnlSales   = Number(c.totalAmount) || 0;
@@ -519,6 +515,87 @@ function buildExpensePrintHtml(d) {
   if (!includeCommission && commissionCur > 0) excludedParts.push('영업수수료');
   const amountNote = `${noteParts.join(' + ') || '포함된 항목이 없습니다'}${excludedParts.length ? ` (${excludedParts.join('·')}은 이번 회차 미포함 · 별도 정산)` : ''}`;
 
+  // ── 증빙 별첨 번호: 출력되는 항목(기타비용 → 영업수수료 순)의 증빙에 별첨 1, 2, … ──
+  const attachList = [];
+  const attachNoOf = {};   // 'etc:원래 순번' → 별첨 번호
+  [['etc', '기타비용', d.etcItems, d.etcVendorName], ['commission', '영업수수료', d.commissionItems, d.commissionVendorName]].forEach(([cat, label, items, vendor]) => {
+    if (!showCat[cat]) return;
+    let rowNo = 0;
+    (items || []).forEach((r, i) => {
+      if (!r || !r.name) return;
+      rowNo++;
+      if (!r.receipt) return;
+      const key = cat + ':' + i;
+      attachNoOf[key] = attachList.length + 1;
+      attachList.push({ no: attachList.length + 1, key, cat, label, rowNo, item: r, vendor: vendorNameOf(vendor) });
+    });
+  });
+  const imgs = d.receiptImages || {};
+
+  const simpleItemsTable = (items, totalLabel, remarkWidthMm, cat) => {
+    const rows = (items || []).map((r, i) => ({ r, i })).filter(x => x.r && x.r.name);
+    const withAtt = rows.some(x => attachNoOf[cat + ':' + x.i]);
+    const sum = rows.reduce((s, x) => s + (Number(x.r.amount) || 0), 0);
+    const cols = withAtt ? 7 : 6;
+    return `<table style="margin-top:2mm">
+      <colgroup><col style="width:9mm"><col style="width:36mm"><col style="width:16mm"><col style="width:14mm"><col style="width:30mm"><col style="width:${withAtt ? remarkWidthMm - 17 : remarkWidthMm}mm">${withAtt ? '<col style="width:17mm">' : ''}</colgroup>
+      <thead><tr><th>No</th><th>항목</th><th>단위</th><th>수량</th><th>금액(원)</th><th>비고</th>${withAtt ? '<th>증빙</th>' : ''}</tr></thead>
+      <tbody>
+        ${rows.length ? rows.map(({ r, i }, n) => { const an = attachNoOf[cat + ':' + i]; return `<tr>
+            <td class="c">${n + 1}</td>
+            <td class="l">${_pEsc(r.name)}</td>
+            <td class="c">${_pEsc(r.unit)}</td>
+            <td class="r">${r.qty ? _pNum(r.qty) : ''}</td>
+            <td class="r">${_pNum(r.amount)}</td>
+            <td class="l">${_pEsc(r.note)}${!withAtt && r.receipt ? ' (증빙 첨부)' : ''}</td>
+            ${withAtt ? `<td class="c"${an ? ' style="font-weight:700"' : ''}>${an ? '별첨 ' + an : '-'}</td>` : ''}
+          </tr>`; }).join('') : `<tr><td class="c" colspan="${cols}">입력된 내역이 없습니다</td></tr>`}
+        <tr class="total"><td class="c" colspan="4">${totalLabel}</td><td class="r">${_pNum(sum)}</td><td${withAtt ? ' colspan="2" class="c"' : ''}>${withAtt ? `증빙 ${rows.filter(x => attachNoOf[cat + ':' + x.i]).length}건 첨부` : ''}</td></tr>
+      </tbody>
+    </table>`;
+  };
+  const commissionItemsTable = simpleItemsTable(d.commissionItems, '합 계', 68, 'commission');
+  const etcItemsTable = simpleItemsTable(d.etcItems, '합계(VAT포함)', 81, 'etc');
+
+  // 증빙 형식 표시 (PDF n쪽 · 사진 · 파일)
+  const attKind = (a) => {
+    const t = String(a.item.receipt.type || '').toLowerCase(), n = String(a.item.receipt.name || '').toLowerCase();
+    const im = imgs[a.key];
+    if (t.includes('pdf') || /\.pdf$/.test(n)) return 'PDF' + (im && im.pageCount ? ` ${im.pageCount}쪽` : '');
+    if (t.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|heic)$/.test(n)) return '사진';
+    return '파일';
+  };
+  // 별첨 페이지 — 한 쪽에 2칸, PDF 는 쪽마다 한 칸
+  const attSlots = [];
+  attachList.forEach(a => {
+    const im = imgs[a.key] || null;
+    const pages = (im && im.pages && im.pages.length) ? im.pages : [null];
+    pages.forEach((src, pi) => attSlots.push({ a, im, src, pi, pn: pages.length }));
+  });
+  const attSlotHtml = ({ a, im, src, pi, pn }) => {
+    const rc = a.item.receipt;
+    const kind = attKind(a) + (pn > 1 ? ` · ${pi + 1}/${pn}쪽` : '') + (im && im.note && pi === 0 ? ` · ${im.note}` : '');
+    const url = (im && im.url) || rc.driveUrl || '';
+    const miss = (im && im.error) ? im.error
+      : (im ? '미리보기를 만들 수 없는 파일입니다' : '증빙 이미지를 준비하지 못했습니다');
+    return `<div class="att-slot">
+      <table class="att-cap">
+        <tr><th class="no" rowspan="2">별첨 ${a.no}${pn > 1 ? `<div style="font-size:7.5pt;font-weight:500">(${pi + 1}/${pn})</div>` : ''}</th><th>항목</th><td class="l">${_pEsc(a.label)} ${a.rowNo} · ${_pEsc(a.item.name)}</td><th>금액</th><td class="r" style="width:30mm;font-weight:700">${_pWon(a.item.amount)}</td>
+          <td class="qr" rowspan="2">${im && im.qr ? `<img src="${im.qr}" alt="원본 QR"><div style="font-size:6.5pt">원본</div>` : '<div style="font-size:7pt;color:#555">원본<br>링크 없음</div>'}</td></tr>
+        <tr><th>파일</th><td class="l" style="word-break:break-all">${_pEsc(rc.name || '')} · ${kind}</td><th>업체</th><td class="l">${_pEsc(a.vendor || '-')}</td></tr>
+      </table>
+      <div class="att-img">${src ? `<img src="${src}" alt="별첨 ${a.no}">` : `<div class="att-miss"><b>${_pEsc(miss)}</b>${url ? `<br>원본: ${_pEsc(url)}` : ''}</div>`}</div>
+    </div>`;
+  };
+  const attPagesHtml = [];
+  for (let i = 0; i < attSlots.length; i += 2) {
+    attPagesHtml.push(`<div class="att-page">
+      <div class="att-head"><div class="t">별첨 · 증빙자료</div><div class="s">『${_pEsc(c.projectName || '')}』 · ${_pEsc(roundLabel)} · ${_pEsc(_pDate(docDate))}</div></div>
+      ${attSlots.slice(i, i + 2).map(attSlotHtml).join('')}
+      <div class="att-foot">※ QR을 휴대폰으로 찍으면 Google Drive 원본이 열립니다 (해당 파일 보기 권한 필요)</div>
+    </div>`);
+  }
+
   const body = `
   <div class="doc-head">
     <div class="doc-title" style="text-align:center;padding-left:0">지 출 품 의 서</div>
@@ -648,7 +725,8 @@ function buildExpensePrintHtml(d) {
     ${buildRoundHistoryTable(d.commissionRounds, commissionCur, includeCommission, commissionTotalBudget, docDate, roundLabel)}
     ${commissionItemsTable}
   </div>`}
-  </div>`;
+  </div>
+  ${attPagesHtml.join('')}`;
 
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <title>지출품의서_${_pEsc(c.projectName || '')}_${_pEsc(roundLabel)}</title>
@@ -900,7 +978,7 @@ async function htmlToPdfBlob(html) {
       image: { type: 'jpeg', quality: 0.96 },
       html2canvas: { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
-      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.doc-head', '.closing', '.agree', 'table.sign', 'table.parties', '.amount', 'table.fund', 'h2', 'h3'] },
+      pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.doc-head', '.closing', '.agree', 'table.sign', 'table.parties', '.amount', 'table.fund', 'h2', 'h3', '.att-slot'] },
     }));
     const out = await h2p().set(opt).from(doc.body).outputPdf('blob');
     // 틀 안에서 만든 Blob 을 바깥 창 Blob 으로 (다운로드·Drive 업로드에서 그대로 쓰도록)
@@ -1033,6 +1111,122 @@ const ExpensePrintPreview = ({ html, onPrint, onClose, printing }) => {
 };
 
 window.classifyPayments = classifyPayments;
+// ═══════════════════════════════════════════════════════════════
+// 증빙 이미지 준비 (출력·미리보기·PDF 전에 한 번) — 별첨 A안
+//   · 사진: 긴 변 1600px JPEG 로 줄여서 넣음
+//   · PDF: 모든 쪽을 그림으로 (한 파일 최대 10쪽, 넘으면 안내)
+//   · 원본 Drive 링크가 있으면 QR 코드
+//   · 파일은 이번 화면에서 첨부한 것(_localFile) 우선, 없으면 Google Drive 에서 받음
+//     (Drive 로그인이 안 돼 있으면 로그인 창을 띄우지 않고 그 칸에 안내 문구)
+//   결과: { 'etc:0': { pages:[dataURL…], pageCount, qr, url, error } , … }
+// ═══════════════════════════════════════════════════════════════
+const _RC_LIBS = {
+  pdf: ['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js'],
+  pdfWorker: ['https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js', 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js'],
+  qr: ['https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js'],
+};
+const _rcLoaded = {};
+function _rcLoad(kind, test) {
+  if (test()) return Promise.resolve();
+  if (_rcLoaded[kind]) return _rcLoaded[kind];
+  _rcLoaded[kind] = (async () => {
+    for (const src of _RC_LIBS[kind]) {
+      try {
+        await new Promise((res, rej) => { const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = rej; document.head.appendChild(el); });
+        if (test()) { if (kind === 'pdf') window.pdfjsLib.GlobalWorkerOptions.workerSrc = _RC_LIBS.pdfWorker[_RC_LIBS.pdf.indexOf(src)] || _RC_LIBS.pdfWorker[0]; return; }
+      } catch (e) { /* 다음 주소 */ }
+    }
+    _rcLoaded[kind] = null;
+    throw new Error(kind === 'pdf' ? 'PDF 미리보기 도구를 불러오지 못했습니다' : 'QR 도구를 불러오지 못했습니다');
+  })();
+  return _rcLoaded[kind];
+}
+const _rcCache = new Map();   // 원본(File 또는 Drive ID) → 결과 (같은 화면에서 다시 출력할 때 재사용)
+
+function _rcCanvasToJpeg(cv) { return cv.toDataURL('image/jpeg', 0.85); }
+async function _rcImageToJpeg(blob) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('사진을 열 수 없습니다 (지원하지 않는 형식)')); im.src = url; });
+    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(img.naturalWidth * k)); cv.height = Math.max(1, Math.round(img.naturalHeight * k));
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(img, 0, 0, cv.width, cv.height);
+    return _rcCanvasToJpeg(cv);
+  } finally { URL.revokeObjectURL(url); }
+}
+const _RC_MAX_PDF_PAGES = 10;
+async function _rcPdfToJpegs(blob) {
+  await _rcLoad('pdf', () => !!window.pdfjsLib);
+  if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) window.pdfjsLib.GlobalWorkerOptions.workerSrc = _RC_LIBS.pdfWorker[0];
+  const pdf = await window.pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+  const out = [];
+  const n = Math.min(pdf.numPages, _RC_MAX_PDF_PAGES);
+  for (let i = 1; i <= n; i++) {
+    const page = await pdf.getPage(i);
+    const v1 = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: Math.min(2.5, 1400 / v1.width) });
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: g, viewport: vp }).promise;
+    out.push(_rcCanvasToJpeg(cv));
+  }
+  return { pages: out, pageCount: pdf.numPages };
+}
+async function _rcQr(url) {
+  await _rcLoad('qr', () => typeof window.qrcode === 'function');
+  const q = window.qrcode(0, 'M'); q.addData(url); q.make();
+  return q.createDataURL(4, 2);
+}
+async function _rcBlob(rc) {
+  if (rc._localFile instanceof Blob) return rc._localFile;
+  if (!rc.driveId) throw new Error('원본 파일이 없습니다 — 증빙을 다시 첨부해 주세요');
+  if (typeof window.hasDriveToken !== 'function' || !window.hasDriveToken()) throw new Error('Google 드라이브에 로그인하지 않아 증빙을 불러오지 못했습니다 — 출력을 다시 누르면 로그인 창이 열립니다');
+  const res = await window.driveFetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(rc.driveId) + '?alt=media&supportsAllDrives=true');
+  if (!res.ok) throw new Error('Google 드라이브에서 증빙을 받지 못했습니다 (HTTP ' + res.status + ')');
+  return await res.blob();
+}
+// 이 증빙 이미지를 만들려면 Drive 에서 받아야 하는지 (출력 버튼에서 로그인 창을 미리 열지 판단)
+function expenseReceiptsNeedDrive({ etcItems, commissionItems }) {
+  return [...(etcItems || []), ...(commissionItems || [])].some(r => r && r.name && r.receipt && !(r.receipt._localFile instanceof Blob) && r.receipt.driveId
+    && !_rcCache.has('drive:' + r.receipt.driveId));
+}
+async function prepareExpenseReceiptImages({ etcItems, commissionItems }) {
+  const out = {};
+  const jobs = [];
+  [['etc', etcItems], ['commission', commissionItems]].forEach(([cat, items]) => (items || []).forEach((r, i) => {
+    if (r && r.name && r.receipt) jobs.push({ key: cat + ':' + i, rc: r.receipt });
+  }));
+  for (const { key, rc } of jobs) {
+    const ck = rc._localFile instanceof Blob ? rc._localFile : (rc.driveId ? 'drive:' + rc.driveId : null);
+    const cached = ck && _rcCache.get(ck);
+    if (cached && !cached.error) { out[key] = { ...cached, url: rc.driveUrl || cached.url, qr: cached.qr }; if (!out[key].qr && rc.driveUrl) { try { out[key].qr = await _rcQr(rc.driveUrl); } catch (e) {} } continue; }
+    const res = { pages: [], pageCount: 0, qr: '', url: rc.driveUrl || '', error: '' };
+    try {
+      const blob = await _rcBlob(rc);
+      const t = String(rc.type || blob.type || '').toLowerCase(), n = String(rc.name || '').toLowerCase();
+      if (t.includes('pdf') || /\.pdf$/.test(n)) {
+        const r = await _rcPdfToJpegs(blob);
+        res.pages = r.pages; res.pageCount = r.pageCount;
+        if (r.pageCount > r.pages.length) res.note = `앞 ${r.pages.length}쪽만 첨부 (전체 ${r.pageCount}쪽)`;
+      } else if (t.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp)$/.test(n)) {
+        res.pages = [await _rcImageToJpeg(blob)]; res.pageCount = 1;
+      } else {
+        res.error = '사진·PDF가 아니라 미리보기를 넣을 수 없습니다 — 원본은 QR로 확인';
+      }
+    } catch (e) {
+      res.error = (e && e.message) || '증빙을 불러오지 못했습니다';
+    }
+    if (res.url) { try { res.qr = await _rcQr(res.url); } catch (e) { /* QR 없이 진행 */ } }
+    if (ck && !res.error) _rcCache.set(ck, res);
+    out[key] = res;
+  }
+  return out;
+}
+window.prepareExpenseReceiptImages = prepareExpenseReceiptImages;
+window.expenseReceiptsNeedDrive = expenseReceiptsNeedDrive;
+
 window.buildExpensePrintHtml = buildExpensePrintHtml;
 window.buildExpenseDocsHtml = buildExpenseDocsHtml;
 window.printExpenseHtml = printExpenseHtml;
