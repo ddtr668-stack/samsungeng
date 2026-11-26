@@ -1001,7 +1001,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
 
   // ─── 인쇄물 (A4 세로) ───
   // 화면 입력값을 A4 세로 인쇄용 독립 문서(HTML)로 변환
-  const buildPrintHtml = () => window.buildExpensePrintHtml({
+  const buildPrintHtml = (receiptImages) => window.buildExpensePrintHtml({
+    receiptImages,   // 증빙 별첨 이미지 (prepareReceiptImages 결과)
     // 기타경비 총액은 화면에서 수정한 값으로 출력
     contract: { ...contract, incidental: etcBudgetNum, productCost: productBudgetNum, subcontractAmount: installBudgetNum, salesCost: commissionBudgetNum }, form,
     subcontractors: (data && data.subcontractors) || [],   // 항목별 업체 정보 조회용
@@ -1033,18 +1034,42 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     return true;
   };
 
-  const handlePreview = () => {
+  // 증빙 별첨용 이미지 준비 — 증빙이 있을 때만. Drive 에서 받아야 하면 버튼 누른 직후 로그인 창을 열고
+  // (로그인을 안 해도 출력은 진행 — 그 칸에 안내 문구), 실패해도 출력 자체는 막지 않는다.
+  const startReceiptDriveLogin = () => (window.expenseReceiptsNeedDrive?.({ etcItems, commissionItems }) ? window.startDriveLoginIfNeeded?.() : null);
+  const prepareReceiptImages = async (driveLogin) => {
+    const count = [...etcItems, ...commissionItems].filter(r => r && r.name && r.receipt).length;
+    if (!count || typeof window.prepareExpenseReceiptImages !== 'function') return undefined;
+    if (driveLogin) await driveLogin;
+    toast?.(`증빙 ${count}건 이미지 준비 중…`, 'default');
+    try {
+      const imgs = await window.prepareExpenseReceiptImages({ etcItems, commissionItems });
+      const failed = Object.values(imgs).filter(x => x && x.error).length;
+      if (failed) toast?.(`증빙 ${failed}건은 이미지를 넣지 못했습니다 — 별첨 칸에 사유가 표시됩니다`, 'default');
+      return imgs;
+    } catch (e) {
+      console.warn('[증빙 이미지]', e);
+      return undefined;
+    }
+  };
+
+  const handlePreview = async () => {
     if (!validatePrint()) return;
-    setPrintHtml(buildPrintHtml());
-    setPreviewMode(true);
+    const driveLogin = startReceiptDriveLogin();
+    setPreviewing(true);
+    try {
+      setPrintHtml(buildPrintHtml(await prepareReceiptImages(driveLogin)));
+      setPreviewMode(true);
+    } finally { setPreviewing(false); }
   };
 
   // 출력 - A4 세로 문서를 숨은 iframe 으로 인쇄 (앱 화면 CSS 와 분리)
   const handlePrint = async () => {
     if (!validatePrint()) return;
+    const driveLogin = startReceiptDriveLogin();
     setPrinting(true);
     try {
-      await window.printExpenseHtml(buildPrintHtml());
+      await window.printExpenseHtml(buildPrintHtml(await prepareReceiptImages(driveLogin)));
     } catch (e) {
       toast?.('출력 실패: ' + errMsg(e), 'error');
     } finally {
@@ -1066,7 +1091,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       const safe = (v) => String(v || '').replace(/[\\/:*?"<>|]/g, '_').trim();
       const fileName = `지출품의서_${safe(contract.projectName) || contract.no}_${roundNo}차`;
       // [🖨️ 출력]과 같은 모양으로 브라우저에서 PDF 생성 (안 되면 Apps Script 변환)
-      const { blob } = await window.makePrintPdf(buildPrintHtml(), { contractNo: contract.no, fileName });
+      const { blob } = await window.makePrintPdf(buildPrintHtml(await prepareReceiptImages(null)), { contractNo: contract.no, fileName });
       window.downloadBlob(blob, `${fileName}.pdf`);
       toast?.('PDF 다운로드 완료', 'success');
 
