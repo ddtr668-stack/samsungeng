@@ -437,7 +437,7 @@ function buildExpensePrintHtml(d) {
     const n = String(name || '').trim();
     if (!n) return { name: '', bizNo: '', manager: '', tel: '', bank: '', account: '', holder: '' };
     if (mainInfo.name && _vn(n) === _vn(mainInfo.name)) return { ...mainInfo, name: n };
-    const s2 = (d.subcontractors || []).find(x => x && _vn(x.name) === _vn(n)) || {};
+    const s2 = (window.findVendorByName ? window.findVendorByName(d.subcontractors, n) : (d.subcontractors || []).find(x => x && _vn(x.name) === _vn(n))) || {};
     return { name: n, bizNo: s2.bizNo || '', manager: s2.manager || '', tel: s2.tel || '', bank: s2.bank || '', account: s2.account || '', holder: s2.holder || '' };
   };
   const vendorNameOf = (override) => infoOf(override).name;
@@ -454,7 +454,9 @@ function buildExpensePrintHtml(d) {
   const withNote = (label, k) => catNote(k) ? `${label} · ${catNote(k)}` : label;
   const noteLine = (k) => catNote(k) ? `<div style="margin:0 0 1.5mm;padding:1.2mm 2mm;border:0.6pt solid #000;font-size:9pt"><b>비고</b> ${_pEsc(catNote(k))}</div>` : '';
   if (includeProduct && productCur > 0) vendorRows.push({ amt: productCur, note: withNote('제품대', 'product'), ...infoOf(d.productVendorName) });
-  if (includeInstall && req > 0) vendorRows.push({ amt: req, note: withNote('설치비', 'install'), ...infoOf(mainInfo.name) });
+  // 설치비 업체: 청구 항목에서 지정한 업체(installVendorName) — 없으면(예전 저장분) 지급대상 칸 업체
+  const installVendor = String(d.installVendorName || '').trim() || mainInfo.name;
+  if (includeInstall && req > 0) vendorRows.push({ amt: req, note: withNote('설치비', 'install'), ...infoOf(installVendor) });
   if (includeEtc && etcCur > 0) vendorRows.push({ amt: etcCur, note: withNote('기타비용', 'etc'), ...infoOf(d.etcVendorName) });
   if (includeCommission && commissionCur > 0) vendorRows.push({ amt: commissionCur, note: withNote('영업수수료', 'commission'), ...infoOf(d.commissionVendorName) });
   const vendorTotal = vendorRows.reduce((s, r) => s + r.amt, 0);
@@ -626,7 +628,7 @@ function buildExpensePrintHtml(d) {
   ${!showCat.install ? '' : `<div class="sec sec-div">
     <h2><span class="num">${catNo.install}.</span>설치비<small>${includeInstall ? `총금액 ${_pNum(installTotalBudget)}원 기준 · 회차별 지급 이력` : '이번 회차 미포함'}</small></h2>
     ${noteLine('install')}
-    ${vendorInfoTable(infoOf(mainInfo.name))}
+    ${vendorInfoTable(infoOf(installVendor))}
     ${buildRoundHistoryTable(d.rounds, req, includeInstall, installTotalBudget, docDate, roundLabel)}
     ${installItemsTable}
   </div>`}

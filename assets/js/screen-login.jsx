@@ -15,6 +15,13 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
   const [form, setForm] = useState({ id:'', password:'', password2:'', name:'', phone:'', dept:'' });
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // 구글 드라이브 연동 준비(스크립트만) — 로그인 버튼을 누르면 바로 Google 로그인 창을 열 수 있게
+  useEffect(() => {
+    if (typeof hasDriveCredentials === 'function' && hasDriveCredentials() && typeof loadGoogleApis === 'function') {
+      loadGoogleApis().catch(() => {});
+    }
+  }, []);
+
   const applyUrl = () => {
     if (!showUrl) return true;
     if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(serverUrl.trim())) {
@@ -56,6 +63,9 @@ const LoginScreen = ({ onLoggedIn, notice: initialNotice }) => {
     try {
       await apiClient.login(id.trim(), password);
       setPassword('');
+      // 앱 로그인과 함께 Google 드라이브 로그인 (엑셀 불러오기·Drive 저장용, 약 1시간 유지)
+      // — 이미 로그인돼 있으면 창이 뜨지 않음. 창을 닫아도 앱 로그인은 그대로 진행.
+      window.startDriveLoginIfNeeded?.();
       onLoggedIn?.();
     } catch (err) {
       const msg = err.code === 'UNKNOWN_ROUTE'

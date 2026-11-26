@@ -649,7 +649,24 @@ const CardHead = ({ title, sub, right }) => (
 );
 
 // Global export
+// 업체 목록에서 이름으로 업체 찾기 — 이름이 정확히 같은 업체를 먼저, 없으면 (주)·㈜·주식회사·띄어쓰기를
+// 빼고 같은 업체 중 정보(사업자번호·계좌·담당자)가 가장 많이 채워진 업체.
+// (예전: '(주)국제전기'를 찾을 때 정보가 비어 있는 '국제전기' 줄이 먼저 잡혀 출력에 사업자번호·담당자가 '-'로 나옴)
+const findVendorByName = (list, name) => {
+  const arr = (list || []).filter(Boolean);
+  const raw = String(name || '').replace(/\s+/g, '');
+  if (!raw) return null;
+  const exact = arr.find(v => String(v.name || '').replace(/\s+/g, '') === raw);
+  if (exact) return exact;
+  const nm = (v) => String(v || '').replace(/\(주\)|㈜|주식회사|\s/g, '').toLowerCase();
+  const key = nm(raw);
+  const score = (v) => ['bizNo', 'account', 'manager', 'tel', 'ceo', 'bank'].filter(k => String(v[k] || '').trim()).length;
+  const cands = arr.filter(v => key && nm(v.name) === key);
+  return cands.sort((x, y) => score(y) - score(x))[0] || null;
+};
+
 Object.assign(window, {
+  findVendorByName,
   backdropClose, hbHistory, BackClose, usePrintReport, printReport, PrintHead,
   useState, useEffect, useMemo, useRef, useCallback, Fragment,
   fmtKRW, fmtKRW억, fmtPct, fmtDate, fmtDateShort, fmtMonth, fmtMonthShort,

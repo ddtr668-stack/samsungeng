@@ -100,7 +100,10 @@ async function loadGoogleApis() {
       // drive: 폴더 생성/수정 (SiteFoldersCard 에서 필요)
       // 기존 drive.readonly 로도 xlsx 다운로드는 가능하지만 폴더 생성을 위해 확장
       scope: 'https://www.googleapis.com/auth/drive',
-      callback: '', // 매번 콜백 지정
+      callback: (resp) => _onTokenResponse(resp),
+      // 팝업이 막히거나(popup_failed_to_open) 사용자가 닫으면(popup_closed) 여기로만 알려줌.
+      // (예전에는 이걸 받지 않아 기다림이 끝나지 않았고 → 지출품의서 저장 등이 '저장 중'에서 멈춰 시트에 반영 안 됨)
+      error_callback: (err) => _onTokenResponse({ error: (err && err.type) || 'popup_error', error_description: err && err.message }),
     });
     _gisInited = true;
   }
@@ -117,46 +120,116 @@ function _applyTokenToGapi(token) {
   } catch (e) { /* gapi.client 아직 미로드 */ }
 }
 
-function requestAccessToken() {
-  return new Promise((resolve, reject) => {
-    _tokenClient.callback = (resp) => {
-      if (resp.error) {
-        // resp.error 는 문자열 OR 객체일 수 있음
-        // 예: 'popup_closed', 'access_denied', 'invalid_client', 'idpiframe_initialization_failed'
-        const code = typeof resp.error === 'string' ? resp.error : (resp.error?.type || JSON.stringify(resp.error));
-        const desc = resp.error_description || resp.error_uri || resp.details || '';
-        // 코드별 사람이 읽을 수 있는 메시지
-        const HUMAN = {
-          'popup_closed_by_user': '사용자가 로그인 팝업을 닫았습니다. 다시 시도하세요.',
-          'popup_closed': '로그인 팝업이 닫혔습니다. 팝업 차단 여부를 확인하세요.',
-          'access_denied': 'Google 계정 접근이 거부되었습니다. OAuth 동의 화면의 테스트 사용자 목록에 로그인한 계정을 추가하세요.',
-          'invalid_client': 'OAuth Client ID가 잘못되었거나, 승인된 JavaScript 원본에 현재 주소가 등록되지 않았습니다.',
-          'idpiframe_initialization_failed': 'OAuth 초기화 실패 — Cloud Console에서 승인된 JavaScript 원본에 현재 주소를 등록했는지 확인하세요.',
-          'immediate_failed': '자동 로그인에 실패했습니다. 팝업을 통해 다시 시도해주세요.',
-          'unauthorized_client': '이 앱이 승인되지 않았습니다. OAuth 클라이언트 설정을 확인하세요.',
-          'unsupported_response_type': 'OAuth 응답 유형이 지원되지 않습니다.',
-        };
-        const humanMsg = HUMAN[code] || `OAuth 실패: ${code}`;
-        const full = desc ? `${humanMsg} · ${desc}` : humanMsg;
-        // 원본 응답도 콘솔에 남김
-        console.error('[OAuth] Token request failed', resp);
-        return reject(new Error(full));
-      }
-      _accessToken = resp.access_token;
-      _accessTokenExp = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
-      try { localStorage.setItem(GDRIVE_TOKEN_KEY, JSON.stringify({ t: _accessToken, exp: _accessTokenExp })); } catch (e) {}
-      _applyTokenToGapi(resp.access_token);
-      resolve(resp.access_token);
+// 진행 중인 로그인 요청은 하나만 — 동시에 여러 곳(증빙 업로드·현장 폴더·PDF 저장 등)에서 불러도
+// 같은 결과를 함께 받는다. (예전에는 나중 요청이 앞 요청의 콜백을 덮어써서 앞 작업이 끝없이 기다림)
+let _pendingToken = null;   // { promise, resolve, reject, timer }
+const TOKEN_WAIT_MS = 90 * 1000;   // 로그인 창에서 90초 동안 응답이 없으면 포기 (저장은 계속 진행)
+
+function _saveToken(resp) {
+  _accessToken = resp.access_token;
+  _accessTokenExp = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+  _tokenChecked = true;
+  try { localStorage.setItem(GDRIVE_TOKEN_KEY, JSON.stringify({ t: _accessToken, exp: _accessTokenExp })); } catch (e) {}
+  _applyTokenToGapi(resp.access_token);
+  try { window.dispatchEvent(new CustomEvent('hb:drive-token', { detail: { exp: _accessTokenExp } })); } catch (e) {}
+}
+
+function _onTokenResponse(resp, late) {
+  const p = _pendingToken;
+  // 로그인 성공 응답은 기다리는 작업이 없어도 저장 (다음 작업에서 바로 사용)
+  if (!p) { if (resp && !resp.error && resp.access_token) _saveToken(resp); return; }
+  // 창이 닫혔다는 알림이 성공 응답보다 먼저 오는 경우가 있어 잠깐 더 기다림
+  if (resp && resp.error === 'popup_closed' && !late) {
+    setTimeout(() => { if (_pendingToken === p) _onTokenResponse(resp, true); }, 1500);
+    return;
+  }
+  _pendingToken = null;
+  clearTimeout(p.timer);
+  if (!resp || resp.error) {
+    // resp.error 는 문자열 OR 객체일 수 있음
+    const code = typeof resp?.error === 'string' ? resp.error : (resp?.error?.type || JSON.stringify(resp?.error));
+    const desc = resp?.error_description || resp?.error_uri || resp?.details || '';
+    const HUMAN = {
+      'popup_closed_by_user': 'Google 로그인 창을 닫았습니다. 다시 시도하세요.',
+      'popup_closed': 'Google 로그인 창이 닫혀 Drive 작업을 건너뛰었습니다. 다시 시도하면 로그인 창이 열립니다.',
+      'popup_failed_to_open': 'Google 로그인 창이 열리지 않았습니다 (팝업 차단). 주소창 오른쪽의 팝업 차단 아이콘에서 이 사이트를 허용해 주세요.',
+      'timeout': 'Google 로그인 응답이 없어 Drive 작업을 건너뛰었습니다.',
+      'access_denied': 'Google 계정 접근이 거부되었습니다. OAuth 동의 화면의 테스트 사용자 목록에 로그인한 계정을 추가하세요.',
+      'invalid_client': 'OAuth Client ID가 잘못되었거나, 승인된 JavaScript 원본에 현재 주소가 등록되지 않았습니다.',
+      'idpiframe_initialization_failed': 'OAuth 초기화 실패 — Cloud Console에서 승인된 JavaScript 원본에 현재 주소를 등록했는지 확인하세요.',
+      'immediate_failed': '자동 로그인에 실패했습니다. 다시 시도해주세요.',
+      'unauthorized_client': '이 앱이 승인되지 않았습니다. OAuth 클라이언트 설정을 확인하세요.',
+      'unsupported_response_type': 'OAuth 응답 유형이 지원되지 않습니다.',
     };
-    // 이미 토큰 있으면 재사용 (silent), 없으면 팝업
-    if (hasDriveToken()) {
-      _applyTokenToGapi(_accessToken);
-      resolve(_accessToken);
-    } else {
-      // prompt '' : 처음 한 번만 동의 화면, 이후에는 계정 확인만 (매번 동의 화면을 띄우지 않음)
-      _tokenClient.requestAccessToken({ prompt: '' });
-    }
-  });
+    const humanMsg = HUMAN[code] || `Google 로그인 실패: ${code}`;
+    console.error('[OAuth] Token request failed', resp);
+    const err = new Error(desc && !HUMAN[code] ? `${humanMsg} · ${desc}` : humanMsg);
+    err.code = code;
+    return p.reject(err);
+  }
+  _saveToken(resp);
+  p.resolve(resp.access_token);
+}
+
+// 브라우저에 보관했던 토큰은 이번 화면에서 처음 쓸 때 한 번 확인 (다른 계정으로 바꿨거나 취소된 토큰이면
+// 401 로 업로드가 계속 실패하던 문제 → 버리고 새로 로그인)
+let _tokenChecked = false;
+async function _verifyStoredToken() {
+  if (_tokenChecked || !_accessToken) return;
+  _tokenChecked = true;
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=' + encodeURIComponent(_accessToken));
+    if (r.status === 400 || r.status === 401) clearDriveToken();
+  } catch (e) { /* 네트워크 오류면 그대로 사용 */ }
+}
+
+// 로그인 창 열기 (있으면 재사용). 버튼을 누른 직후에 불러야 팝업이 막히지 않는다.
+function _openTokenPopup() {
+  if (_pendingToken) return _pendingToken.promise;
+  if (!_tokenClient) return Promise.reject(new Error('Google API 가 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.'));
+  const p = {};
+  p.promise = new Promise((resolve, reject) => { p.resolve = resolve; p.reject = reject; });
+  p.timer = setTimeout(() => _onTokenResponse({ error: 'timeout' }), TOKEN_WAIT_MS);
+  _pendingToken = p;
+  try {
+    // prompt '' : 처음 한 번만 동의 화면, 이후에는 계정 확인만 (창이 잠깐 떴다 닫힘)
+    _tokenClient.requestAccessToken({ prompt: '' });
+  } catch (e) {
+    _onTokenResponse({ error: 'popup_failed_to_open', error_description: e.message });
+  }
+  return p.promise;
+}
+
+async function requestAccessToken() {
+  if (!_tokenChecked && hasDriveToken()) await _verifyStoredToken();
+  // 이미 토큰 있으면 재사용 (창 없음), 없으면 로그인 창
+  if (hasDriveToken()) {
+    _applyTokenToGapi(_accessToken);
+    return _accessToken;
+  }
+  return _openTokenPopup();
+}
+
+// 버튼 클릭 직후(다른 await 전에) 부르면, 토큰이 없을 때 로그인 창을 바로 연다 — 팝업 차단을 피하고
+// 저장 같은 작업이 시작되기 전에 로그인을 끝낼 수 있게. 토큰이 있거나 Drive 미설정이면 아무것도 안 함.
+// 반환: 로그인 진행 Promise (필요 없으면 null). 실패해도 예외를 던지지 않음.
+function startDriveLoginIfNeeded() {
+  try {
+    if (!hasDriveCredentials() || hasDriveToken()) return null;
+    const pr = _tokenClient ? _openTokenPopup() : loadGoogleApis().then(_openTokenPopup);
+    return pr.catch((e) => { console.warn('[Drive 로그인]', e); return null; });
+  } catch (e) { return null; }
+}
+
+// Drive 요청이 401(토큰 만료·취소)이면 토큰을 버리고 한 번 다시 로그인해서 재시도
+async function driveFetch(url, init) {
+  const send = async () => {
+    const token = await requestAccessToken();
+    return fetch(url, { ...(init || {}), headers: { ...((init && init.headers) || {}), Authorization: 'Bearer ' + token } });
+  };
+  let res = await send();
+  if (res.status === 401) { clearDriveToken(); res = await send(); }
+  return res;
 }
 
 // ─── Drive Picker 열기 → 파일 선택 → Blob 다운로드 ───
@@ -525,4 +598,6 @@ Object.assign(window, {
   requestAccessToken,
   hasDriveToken,
   clearDriveToken,
+  startDriveLoginIfNeeded,
+  driveFetch,
 });

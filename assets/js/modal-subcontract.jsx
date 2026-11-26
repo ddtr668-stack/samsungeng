@@ -262,6 +262,7 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
   };
   const handlePdf = async () => {
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    const driveLogin = window.startDriveLoginIfNeeded?.();   // Drive 에도 저장 — 로그인 창은 클릭 직후에
     setGeneratingPdf(true);
     try {
       // [🖨️ 출력]과 같은 모양으로 브라우저에서 PDF 생성 (안 되면 Apps Script 변환)
@@ -269,7 +270,10 @@ const SubcontractModal = ({ open, onClose, contract, data }) => {
       window.downloadBlob(blob, `${fileBase()}.pdf`);
       toast?.('PDF 다운로드 완료', 'success');
       // 이 프로젝트의 Drive 폴더 › 계약서 에도 저장 (지출품의서 PDF 가 '지출품의서' 폴더로 가는 것과 같은 방식)
-      if (window.hasDriveCredentials?.()) {
+      if (driveLogin) await driveLogin;
+      if (window.hasDriveCredentials?.() && !window.hasDriveToken?.()) {
+        toast?.('Google 드라이브에 로그인하지 않아 프로젝트 폴더 저장은 건너뛰었습니다 (PDF는 다운로드됨)', 'default');
+      } else if (window.hasDriveCredentials?.()) {
         try {
           const day = (doc === 'warranty' ? (f.pledgeDate || f.endDate) : f.contractDate) || new Date().toISOString().slice(0, 10);
           const name = `${doc === 'warranty' ? '하자보증이행각서' : '설치도급계약서'}_${String(f.sub.name || '하도급인').replace(/[\\/:*?"<>|]/g, '_')}_${day}.pdf`;

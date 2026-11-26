@@ -657,7 +657,6 @@ async function createDriveFolder(name, parentId) {
 // parentId 폴더에 새 파일로 업로드하고 fileId/webViewLink 반환
 async function uploadFileToDrive(blob, filename, parentId, mimeTypeOverride) {
   await loadGoogleApis();
-  const token = await requestAccessToken();
   if (!parentId) throw new Error('업로드할 폴더 ID 가 필요합니다.');
   if (!blob) throw new Error('업로드할 파일이 없습니다.');
 
@@ -679,12 +678,10 @@ async function uploadFileToDrive(blob, filename, parentId, mimeTypeOverride) {
   ]);
 
   const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,mimeType,size,modifiedTime';
-  const res = await fetch(url, {
+  // 토큰이 만료·취소됐으면(401) 다시 로그인해서 한 번 더 보냄
+  const res = await driveFetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + token,
-      'Content-Type': 'multipart/related; boundary=' + boundary,
-    },
+    headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
     body,
   });
   if (!res.ok) {

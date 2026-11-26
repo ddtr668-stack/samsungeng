@@ -120,6 +120,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const [savedVendorNames, setSavedVendorNames] = useState([]);   // 이번 창에서 새로 저장한 업체
   // 🆕 v3: 항목별 기성 카드마다 별도로 지정할 수 있는 업체명(지급대상이 카테고리별로 다를 때)
   const [productVendorName, setProductVendorName] = useState('');
+  // 설치비 지급 업체 — 아래 '지급대상(도급업체)' 입력칸과 따로 관리 (항목에서 업체를 바꿔도 지급대상 칸은 그대로)
+  const [installVendorName, setInstallVendorName] = useState('');
   const [commissionVendorName, setCommissionVendorName] = useState('');
   const [etcVendorName, setEtcVendorName] = useState('');
   // 항목별 비고(지급 사유)
@@ -163,6 +165,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // ─── 계약 변경 시 기본값 세팅 ───
   useEffect(() => {
     if (!open || !contract) return;
+    const subMatch = window.matchSubcontractor?.(data, contract.subcontractor);
+    setInstallVendorName(subMatch ? subMatch.name : (contract.subcontractor || ''));
     setForm(f => ({
       ...f,
       docDate: new Date().toISOString().slice(0, 10),
@@ -174,7 +178,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       subName: contract.subcontractor || '',
       // 계약의 도급업체가 등록업체(도급업체 시트/거래처관리)와 일치하면 업체정보 자동 채움
       ...(() => {
-        const m = window.matchSubcontractor?.(data, contract.subcontractor);
+        const m = subMatch;
         return m ? {
           subName: m.name, subBizNo: m.bizNo || '', subCeo: m.ceo || '',
           subManager: m.manager || '', subManagerTel: m.tel || '',
@@ -389,6 +393,17 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         setCorrections(r.corrections || []);
         // 새 지출품의서는 '마지막 저장 회차 + 1' 차로 시작 (1차가 있으면 2차) — 수기 지급이력 회차도 고려
         setForm(f => ({ ...f, paymentCount: String(Math.max(nextRoundNo(hist), manualMaxRef.current + 1)) }));
+        // 항목별 업체는 지난 회차에 지정한 업체를 그대로 이어서 (비어 있는 칸만)
+        const last = [...hist].filter(h => h.status !== 'cancelled' && !h.manual)
+          .sort((a, b) => (Number(a.roundNo) - Number(b.roundNo)) || (Number(a.no) - Number(b.no))).pop();
+        if (last) {
+          const snap = last.snapshot || {};
+          const keep = (v) => (cur) => String(cur || '').trim() ? cur : (v || '');
+          setProductVendorName(keep(snap.productVendorName ?? last.productVendorName));
+          setEtcVendorName(keep(snap.etcVendorName ?? last.etcVendorName));
+          setCommissionVendorName(keep(snap.commissionVendorName ?? last.commissionVendorName));
+          setInstallVendorName(keep(snap.installVendorName ?? last.subcontractor));
+        }
       })
       .catch(e => {
         if (!alive) return;
@@ -448,6 +463,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setProductVendorName(r.productVendorName || '');
     setCommissionVendorName(r.commissionVendorName || '');
     setEtcVendorName(r.etcVendorName || '');
+    setInstallVendorName(r.subcontractor || '');
     setCatNotes({ ...EMPTY_NOTES, ...(r.catNotes || {}) });
     setProductSummary(r.productSummary || null);
     // 저장 당시 화면 상태 전체가 있으면 그대로 복원 (비고·비고사항·입력칸·토글·금액·업체명)
@@ -465,6 +481,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       setProductVendorName(snap.productVendorName || '');
       setCommissionVendorName(snap.commissionVendorName || '');
       setEtcVendorName(snap.etcVendorName || '');
+      if (snap.installVendorName !== undefined) setInstallVendorName(snap.installVendorName || '');
       setProductFilename(snap.productFilename || '');
       setInstallFilename(snap.installFilename || '');
     }
@@ -571,30 +588,34 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     .map(m => ({ roundNo: Number(m.roundNo) || 0, docDate: m.docDate, amount: Number(m.amount) || 0, manual: true, note: m.note })))]
     .sort((x, y) => (x.roundNo - y.roundNo) || String(x.docDate || '').localeCompare(String(y.docDate || '')));
 
-  // 설치비 업체를 목록에서 고르면 지급 대상(도급업체) 정보도 그 업체로 채움 (계좌 오입금 방지: 없는 값은 빈칸)
-  const pickInstallVendor = (name) => {
-    const v = ((data && data.subcontractors) || []).find(x => x && String(x.name || '').trim() === name) || null;
-    setForm(f => v ? {
-      ...f, subName: name, subBizNo: v.bizNo || '', subCeo: v.ceo || '', subAddress: v.address || '',
-      subManager: v.manager || '', subManagerTel: v.tel || '', subBank: v.bank || '', subAccount: v.account || '', subHolder: v.holder || '',
-    } : { ...f, subName: name });
-  };
-
   // 업체명 아래 한 줄 정보 (대표자·사업자번호·계좌): 저장된 업체 목록에서 찾음
   const vendorDetailOf = (name) => {
     const n = String(name || '').trim();
     if (!n) return null;
-    const v = ((data && data.subcontractors) || []).find(x => x && String(x.name || '').trim() === n);
+    const v = window.findVendorByName((data && data.subcontractors) || [], n);
     return v ? { ceo: v.ceo, bizNo: v.bizNo, bank: v.bank, account: v.account, holder: v.holder } : null;
   };
-  // 설치비는 지급 대상(도급업체) 칸에 입력된 값
-  const installVendorDetail = form.subName ? { ceo: form.subCeo, bizNo: form.subBizNo, bank: form.subBank, account: form.subAccount, holder: form.subHolder } : null;
+  // 설치비 업체 정보: 지급대상(도급업체) 칸의 업체와 같으면 그 칸의 값, 다르면 도급업체 목록의 값
+  // (항목에서 업체를 골라도 지급대상 칸은 바뀌지 않음 — 지급대상 칸은 그 칸의 [업체정보 저장]으로만 저장)
+  const _sameVendor = (a, b) => { const n = (v) => String(v || '').replace(/\(주\)|㈜|주식회사|\s/g, '').toLowerCase(); return !!n(a) && n(a) === n(b); };
+  const installVendorInfo = (() => {
+    const name = String(installVendorName || '').trim();
+    if (!name) return null;
+    if (_sameVendor(name, form.subName)) return {
+      name, bizNo: form.subBizNo, ceo: form.subCeo, manager: form.subManager, tel: form.subManagerTel,
+      bank: form.subBank, account: form.subAccount, holder: form.subHolder, address: form.subAddress,
+    };
+    const v = window.findVendorByName((data && data.subcontractors) || [], name) || {};
+    return { name, bizNo: v.bizNo || '', ceo: v.ceo || '', manager: v.manager || '', tel: v.tel || '',
+      bank: v.bank || '', account: v.account || '', holder: v.holder || '', address: v.address || '' };
+  })();
+  const installVendorDetail = installVendorInfo;
 
   // 업체 드롭다운: 도급업체 관리에 저장된 업체 + 이전 지출품의서에서 쓴 업체명 + 이번 창에서 저장한 업체
   const vendorOptions = [...new Set([
     ...((data && data.subcontractors) || []).map(v => v && v.name),
     ...expenseHistory.flatMap(h => [h.productVendorName, h.etcVendorName, h.commissionVendorName, h.subcontractor]),
-    ...savedVendorNames,
+    ...savedVendorNames, installVendorName,
   ].map(v => String(v || '').trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y, 'ko'));
 
   // 계약금 · 중도금 · 잔금 분류 (1회차=계약금 · 잔금 남은 추가입금=중도금 합산)
@@ -607,26 +628,6 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // ─── 임포트 ───
   const errMsg = (e) => (e?.message || String(e || '알 수 없는 오류'));
 
-  // 🆕 v3: 항목별 기성 카드의 "💾 업체정보 저장" 버튼
-  // - 설치비 카드: 지급대상(도급업체) 섹션에서 입력한 전체 상세정보(사업자번호·담당자·계좌 등)를
-  //   도급업체 등록 시트 + 거래처관리 시트에 저장 (v2 이전엔 지급대상 섹션 상단 버튼이 하던 일)
-  const handleSaveFullVendor = async () => {
-    if (!form.subName || !form.subName.trim()) { toast?.('업체명을 입력하거나 선택하세요', 'error'); return; }
-    if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
-    setSavingVendorCat('install');
-    try {
-      const res = await apiClient.saveSubcontractor({
-        name: form.subName.trim(), bizNo: form.subBizNo || '', ceo: form.subCeo || '',
-        address: form.subAddress || '', manager: form.subManager || '', tel: form.subManagerTel || '',
-        bank: form.subBank || '', account: form.subAccount || '', holder: form.subHolder || '',
-      });
-      const isNew = res?.result?.registry === 'created' || res?.result?.partner === 'created';
-      toast?.(`"${form.subName}" 업체 정보 저장 완료${isNew ? ' (신규 등록)' : ' (갱신)'}`, 'success');
-      window.refreshData?.().catch(() => {});
-    } catch (e) {
-      toast?.('업체 정보 저장 실패: ' + errMsg(e), 'error');
-    } finally { setSavingVendorCat(null); }
-  };
   // - 제품대/영업수수료/기타경비 카드: 업체명만 도급업체 등록 시트에 가볍게 저장(참고용 등록).
   //   카테고리별로 지급처가 다를 수 있어 이름만 별도 등록 — 상세정보(계좌 등)는 지급대상 섹션의
   //   기본 도급업체 정보를 함께 참고해 사용한다.
@@ -650,19 +651,24 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     } finally { setSavingVendorCat(null); }
   };
 
+  // 청구 항목(제품대·설치비·기타경비·영업수수료)의 [업체정보 저장] — 새 업체명만 도급업체 목록에 등록.
+  // 이미 있는 업체는 아무것도 바꾸지 않는다. (예전에는 기존 업체 정보를 다시 보내면서 사업자번호가 같은
+  // 다른 업체의 이름·정보가 바뀌거나, 설치비는 아래 지급대상 칸 값으로 덮어써서 업체가 계속 바뀌었음)
+  // 대표자·계좌 등 상세 정보는 아래 '지급대상(도급업체)' 칸에서 입력하고 그 칸의 [업체정보 저장]으로 저장.
   const handleSaveCategoryVendorName = async (catKey, name, label) => {
-    if (!name || !name.trim()) { toast?.('업체명을 입력하세요', 'error'); return; }
+    const nm = String(name || '').trim();
+    if (!nm) { toast?.('업체명을 입력하세요', 'error'); return; }
+    const known = [...((data && data.subcontractors) || []).map(v => v && v.name), ...savedVendorNames].some(v => _sameVendor(v, nm));
+    if (known) { toast?.(`"${nm}" 은(는) 이미 등록된 업체입니다 — ${label} 업체로 지정됨 (업체 정보는 그대로)`, 'success'); return; }
     if (typeof hasApiUrl !== 'function' || !hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     setSavingVendorCat(catKey);
     try {
-      // 이미 등록된 업체면 기존 정보(대표자·계좌 등)를 함께 보내 지워지지 않게 함
-      const known = ((data && data.subcontractors) || []).find(v => v && String(v.name || '').trim() === name.trim()) || {};
-      await apiClient.saveSubcontractor({ ...known, name: name.trim() });
-      setSavedVendorNames(v => v.includes(name.trim()) ? v : [...v, name.trim()]);   // 드롭다운에 바로 추가
-      toast?.(`"${name}" ${label} 업체정보 저장 완료`, 'success');
+      await apiClient.saveSubcontractor({ name: nm });
+      setSavedVendorNames(v => v.includes(nm) ? v : [...v, nm]);   // 드롭다운에 바로 추가
+      toast?.(`"${nm}" ${label} 업체를 새로 등록했습니다 (대표자·계좌는 아래 지급대상 칸에서 입력·저장)`, 'success');
       window.refreshData?.().catch(() => {});
     } catch (e) {
-      toast?.('업체 정보 저장 실패: ' + errMsg(e), 'error');
+      toast?.('업체 등록 실패: ' + errMsg(e), 'error');
     } finally { setSavingVendorCat(null); }
   };
 
@@ -671,6 +677,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 이 프로젝트 폴더 안의 파일만 바로 보이게 하기 위함. 폴더를 못 찾아도(권한/네트워크 등)
   // 가져오기 자체는 막지 않고 전체 Drive 검색으로 조용히 폴백한다.
   const pickFromDriveScoped = async (categoryKey, title) => {
+    window.startDriveLoginIfNeeded?.();   // 로그인 창을 클릭 직후에 (팝업 차단 방지)
     let folderId = null;
     try {
       if (window.hasDriveCredentials?.()) {
@@ -686,7 +693,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 업로드가 실패해도 가져오기 자체(항목 파싱)는 이미 끝난 뒤이므로 조용히 무시하고,
   // 성공하면 "🔗 파일 열기" 버튼이 그 Drive 파일을 가리키도록 url 만 돌려준다.
   const autoSaveLocalFileToDrive = async (categoryKey, blob, filename) => {
-    if (!window.hasDriveCredentials?.()) return null;
+    // 로그인이 안 돼 있으면 로그인 창을 띄우지 않고 건너뜀 (파일 선택 뒤라 팝업이 막히고, 가져오기가 멈춰 보였음)
+    if (!window.hasDriveCredentials?.() || !window.hasDriveToken?.()) return null;
     try {
       const { file } = await window.uploadFileToCategory(contract, categoryKey, blob, filename);
       return file?.url || file?.webViewLink || null;
@@ -716,7 +724,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         setInstallFileUrl('');
         const driveUrl = await autoSaveLocalFileToDrive('install', picked.blob, picked.filename);
         setInstallFileUrl(driveUrl || '');
-        toast?.(`설치비 ${items.length}건 임포트` + (driveUrl ? ' · Drive에 자동 저장됨' : ''), 'success');
+        toast?.(`설치비 ${items.length}건 임포트` + (driveUrl ? ' · Drive에 자동 저장됨' : (window.hasDriveCredentials?.() && !window.hasDriveToken?.() ? ' · Drive 자동 저장은 건너뜀 (Google 로그인 필요)' : '')), 'success');
       }
     } catch (e) {
       if (!/취소/.test(errMsg(e))) toast?.('가져오기 실패: ' + errMsg(e), 'error');
@@ -748,7 +756,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         setProductFileUrl('');
         const driveUrl = await autoSaveLocalFileToDrive('product', picked.blob, picked.filename);
         setProductFileUrl(driveUrl || '');
-        toast?.(`제품 ${items.length}건 임포트 (재료비 ${Math.round(summary.totalMaterial).toLocaleString()}원)` + (driveUrl ? ' · Drive에 자동 저장됨' : ''), 'success');
+        toast?.(`제품 ${items.length}건 임포트 (재료비 ${Math.round(summary.totalMaterial).toLocaleString()}원)` + (driveUrl ? ' · Drive에 자동 저장됨' : (window.hasDriveCredentials?.() && !window.hasDriveToken?.() ? ' · Drive 자동 저장은 건너뜀 (Google 로그인 필요)' : '')), 'success');
       }
     } catch (e) {
       if (!/취소/.test(errMsg(e))) toast?.('가져오기 실패: ' + errMsg(e), 'error');
@@ -824,16 +832,17 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     roundNo: Number(form.paymentCount) || 1,
     docDate: form.docDate,
     manager: form.manager,
-    subcontractor: form.subName || contract.subcontractor,
-    subBizNo: form.subBizNo,
-    subCeo: form.subCeo,
+    // 설치비 지급 업체(항목에서 지정) — 지정 안 했으면 지급대상 칸 업체
+    subcontractor: (installVendorInfo ? installVendorInfo.name : form.subName) || contract.subcontractor,
+    subBizNo: installVendorInfo ? installVendorInfo.bizNo : form.subBizNo,
+    subCeo: installVendorInfo ? installVendorInfo.ceo : form.subCeo,
     companyName: form.companyName,
-    subManager: form.subManager,
-    subManagerTel: form.subManagerTel,
-    subBank: form.subBank,
-    subAccount: form.subAccount,
-    subHolder: form.subHolder,
-    subAddress: form.subAddress,
+    subManager: installVendorInfo ? installVendorInfo.manager : form.subManager,
+    subManagerTel: installVendorInfo ? installVendorInfo.tel : form.subManagerTel,
+    subBank: installVendorInfo ? installVendorInfo.bank : form.subBank,
+    subAccount: installVendorInfo ? installVendorInfo.account : form.subAccount,
+    subHolder: installVendorInfo ? installVendorInfo.holder : form.subHolder,
+    subAddress: installVendorInfo ? installVendorInfo.address : form.subAddress,
     amount: requestAmount,
     prevProgress: Number(form.prevProgress) || 0,
     commission: commissionRequestAmount,
@@ -858,13 +867,21 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       catNotes: { ...catNotes },
       includeInstall, includeProduct, includeCommission, includeEtc,
       docCategory, productAmount, commissionAmount, etcAmount,
-      productVendorName, commissionVendorName, etcVendorName,
+      productVendorName, commissionVendorName, etcVendorName, installVendorName,
       productFilename, installFilename,
     },
   });
 
   const handleSave = async () => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    // Drive 에 올릴 증빙(PC에서 첨부한 파일)이 있으면, 버튼을 누른 바로 지금 Google 로그인을 시작
+    // (다른 확인창·저장을 기다린 뒤에 열면 팝업이 막히거나, 창을 닫았을 때 저장이 멈추는 문제가 있었음)
+    const receiptFiles = window.hasDriveCredentials?.()
+      ? [...etcItems, ...commissionItems].filter(item => item.receipt?._localFile && !item.receipt?.driveId)
+          .map(item => ({ blob: item.receipt._localFile, filename: item.receipt.name, _itemRef: item }))
+      : [];
+    const driveLogin = receiptFiles.length ? window.startDriveLoginIfNeeded?.() : null;
+    if (driveLogin) toast?.('Google 드라이브 로그인 창이 열립니다 — 증빙 업로드용입니다. 로그인하지 않아도 지출품의서는 저장됩니다.', 'default');
     const payload = buildPayload();
     // 같은 차수에 이미 저장된 자료가 있으면 변경 저장 확인
     const sameRound = expenseHistory.filter(h => h.status !== 'cancelled' && !h.manual && Number(h.roundNo) === Number(payload.roundNo));
@@ -878,19 +895,12 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setSaving(true);
     try {
 
-      // Drive 증빙 파일 업로드 (자격 증명 있을 때만)
-      if (window.hasDriveCredentials?.() && (etcItems.length > 0 || commissionItems.length > 0)) {
-        const receiptFiles = [];
-        [...etcItems, ...commissionItems].forEach((item, idx) => {
-          if (item.receipt?._localFile && !item.receipt?.driveId) {
-            receiptFiles.push({
-              blob: item.receipt._localFile,
-              filename: item.receipt.name,
-              _itemRef: item,  // 나중에 업데이트용
-            });
-          }
-        });
-        if (receiptFiles.length > 0) {
+      // Drive 증빙 파일 업로드 (자격 증명 있을 때만) — 로그인이 안 되면 건너뛰고 시트 저장은 계속
+      if (receiptFiles.length > 0) {
+        if (driveLogin) await driveLogin;
+        if (!window.hasDriveToken?.()) {
+          toast?.(`Google 드라이브에 로그인하지 않아 증빙 ${receiptFiles.length}건은 올리지 않았습니다 (지출품의서는 저장). 다시 저장하면 업로드됩니다.`, 'default');
+        } else {
           try {
             toast?.(`증빙 ${receiptFiles.length}건 Drive 업로드 중…`, 'default');
             const up = await window.uploadExpenseReceipts(
@@ -1009,7 +1019,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     corrections: printCorrections,
     includeInstall, includeProduct, includeCommission, includeEtc,
     // 🆕 v3: 카테고리별 업체명 오버라이드(지정 안 하면 출력에서 기본 도급업체 정보를 그대로 사용)
-    productVendorName, commissionVendorName, etcVendorName,
+    productVendorName, commissionVendorName, etcVendorName, installVendorName,
     catNotes,
     companyName: form.companyName,   // 작성자가 선택·수정한 출력용 회사명
     paySplit,
@@ -1049,6 +1059,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const handlePdfDownload = async () => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     if (!validatePrint()) return;
+    const driveLogin = window.startDriveLoginIfNeeded?.();   // Drive 에도 저장 — 로그인 창은 클릭 직후에
     setGeneratingPdf(true);
     try {
       const roundNo = Number(form.paymentCount) || 1;
@@ -1060,7 +1071,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       toast?.('PDF 다운로드 완료', 'success');
 
       // Drive 자동 업로드 (자격 증명 있을 때만)
-      if (window.hasDriveCredentials?.()) {
+      if (driveLogin) await driveLogin;
+      if (window.hasDriveCredentials?.() && !window.hasDriveToken?.()) {
+        toast?.('Google 드라이브에 로그인하지 않아 Drive 저장은 건너뛰었습니다 (PDF는 다운로드됨)', 'default');
+      } else if (window.hasDriveCredentials?.()) {
         try {
           await window.uploadExpensePdf(contract, roundNo, form.docDate, blob);
           toast?.('Drive 지출품의서 폴더에도 저장됨', 'success');
@@ -1107,7 +1121,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   };
   const CAT_DEFS = [
     { key:'product',    name:'제품대',   included: includeProduct,    total: productBudgetNum,    rounds: productRounds,    vendor: productVendorName },
-    { key:'install',    name:'설치비',   included: includeInstall,    total: installBudgetNum,    rounds: previousRounds,   vendor: form.subName },
+    { key:'install',    name:'설치비',   included: includeInstall,    total: installBudgetNum,    rounds: previousRounds,   vendor: installVendorName },
     { key:'etc',        name:'기타경비', included: includeEtc,        total: etcBudgetNum,        rounds: etcRounds,        vendor: etcVendorName },
     { key:'commission', name:'영업수수료', included: includeCommission, total: commissionBudgetNum, rounds: commissionRounds, vendor: commissionVendorName },
   ];
@@ -1428,14 +1442,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
             banner={budgetBanner('install')}
             vendorDetail={installVendorDetail}
             note={catNotes.install} onNoteChange={setCatNote('install')}
-            vendorValue={form.subName} onVendorChange={v => {
-              const known = ((data && data.subcontractors) || []).some(x => x && String(x.name || '').trim() === String(v).trim());
-              if (known) pickInstallVendor(String(v).trim()); else setForm({...form, subName: v});
-            }}
+            vendorValue={installVendorName} onVendorChange={setInstallVendorName}
             vendorOptions={vendorOptions}
-            onVendorPick={pickInstallVendor}
             vendorPlaceholder="설치비 지급 업체명" vendorLabel="설치비"
-            onSaveVendor={handleSaveFullVendor}
+            onSaveVendor={() => handleSaveCategoryVendorName('install', installVendorName, '설치비')}
             savingVendor={savingVendorCat === 'install'}
             totalAmount={installBudget}
             onTotalChange={setInstallBudget}
@@ -1553,7 +1563,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
           {/* 지급대상 (도급업체) */}
           <div className="xp-list-head" style={{marginTop:32}}>
             <h3>지급대상 (도급업체)</h3>
-            <span className="lg">설치비 업체 · 다른 항목은 항목별 업체명 사용</span>
+            <span className="lg">업체 정보 입력·저장 전용 · 청구 항목의 업체 지정과 따로 저장됩니다</span>
           </div>
           <div style={{paddingTop:12}}>
             <SubcontractorBlock
