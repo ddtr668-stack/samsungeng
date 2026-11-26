@@ -437,7 +437,7 @@ function buildExpensePrintHtml(d) {
     const n = String(name || '').trim();
     if (!n) return { name: '', bizNo: '', manager: '', tel: '', bank: '', account: '', holder: '' };
     if (mainInfo.name && _vn(n) === _vn(mainInfo.name)) return { ...mainInfo, name: n };
-    const s2 = (d.subcontractors || []).find(x => x && _vn(x.name) === _vn(n)) || {};
+    const s2 = (window.findVendorByName ? window.findVendorByName(d.subcontractors, n) : (d.subcontractors || []).find(x => x && _vn(x.name) === _vn(n))) || {};
     return { name: n, bizNo: s2.bizNo || '', manager: s2.manager || '', tel: s2.tel || '', bank: s2.bank || '', account: s2.account || '', holder: s2.holder || '' };
   };
   const vendorNameOf = (override) => infoOf(override).name;

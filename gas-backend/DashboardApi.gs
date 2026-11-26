@@ -20,7 +20,7 @@
 
 // ─── 배포 버전 확인용 (설정 화면 "연결 테스트"에 표시) ───
 // 이 값이 바뀌지 않으면 Apps Script 에 최신 코드가 반영·재배포되지 않은 것입니다.
-var BUILD_VERSION_ = '2026-11-25-01 (지출품의서 옛 회차 연결 복구 · 업체 저장 분리)';
+var BUILD_VERSION_ = '2026-11-26-01 (지출품의서 회차 복구 · 업체 저장 분리 · 같은 이름 업체 우선)';
 
 // ─── DB 컬럼 매핑 (계약관리_v1.3 시트 기준) ───
 var COL_MAP_ = {
@@ -1209,14 +1209,18 @@ function apiSaveSubcontractor_(payload) {
       var vals = sheet.getRange(2, 1, lastRow - 1, reg.width).getValues();
       // 같은 업체명 줄을 먼저 찾고, 없을 때만 사업자번호로 찾음 (업체명을 고친 경우)
       // (예전: 사업자번호가 같으면 이름이 다른 업체 줄을 먼저 찾아 그 업체 이름·정보를 바꿔버림)
-      var byBiz = 0;
+      // 이름이 정확히 같은 줄 → (주)·띄어쓰기만 다른 줄 → 사업자번호가 같은 줄 순서
+      var exactKey = name.replace(/\s+/g, '');
+      var byExact = 0, byNorm = 0, byBiz = 0;
       for (var i = 0; i < vals.length; i++) {
         var rowBizNo = C.bizNo >= 0 ? String(vals[i][C.bizNo] || '').trim() : '';
         var rowName = C.name >= 0 ? String(vals[i][C.name] || '').trim() : '';
-        if (rowName && _gNorm_(rowName) === nk) { targetRow = i + 2; oldRow = vals[i]; break; }
+        if (rowName && rowName.replace(/\s+/g, '') === exactKey) { byExact = i + 2; break; }
+        if (!byNorm && rowName && _gNorm_(rowName) === nk) byNorm = i + 2;
         if (!byBiz && bizNo && rowBizNo && rowBizNo === bizNo) byBiz = i + 2;
       }
-      if (!targetRow && byBiz) { targetRow = byBiz; oldRow = vals[byBiz - 2]; }
+      targetRow = byExact || byNorm || byBiz;
+      if (targetRow) oldRow = vals[targetRow - 2];
     }
     var setCol = function (row, idx, val) { if (idx >= 0 && val !== undefined && val !== null) sheet.getRange(row, idx + 1).setValue(val); };
     if (targetRow) {
@@ -1266,14 +1270,15 @@ function apiSaveSubcontractor_(payload) {
     var ptargetRow = 0;
     if (plastRow >= 2) {
       var pvals = psheet.getRange(2, 1, plastRow - 1, 12).getValues();
-      var pByBiz = 0;
+      var pExact = 0, pNorm = 0, pByBiz = 0, pKey = name.replace(/\s+/g, '');
       for (var j = 0; j < pvals.length; j++) {
         var pRowBizNo = String(pvals[j][0] || '').trim();
         var pRowName = String(pvals[j][1] || '').trim();
-        if (pRowName && _gNorm_(pRowName) === nk) { ptargetRow = j + 2; break; }
+        if (pRowName && pRowName.replace(/\s+/g, '') === pKey) { pExact = j + 2; break; }
+        if (!pNorm && pRowName && _gNorm_(pRowName) === nk) pNorm = j + 2;
         if (!pByBiz && bizNo && pRowBizNo && pRowBizNo === bizNo) pByBiz = j + 2;
       }
-      if (!ptargetRow && pByBiz) ptargetRow = pByBiz;
+      ptargetRow = pExact || pNorm || pByBiz;
     }
     var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
     if (ptargetRow) {

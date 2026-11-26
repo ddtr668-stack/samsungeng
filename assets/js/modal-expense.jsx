@@ -592,7 +592,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const vendorDetailOf = (name) => {
     const n = String(name || '').trim();
     if (!n) return null;
-    const v = ((data && data.subcontractors) || []).find(x => x && String(x.name || '').trim() === n);
+    const v = window.findVendorByName((data && data.subcontractors) || [], n);
     return v ? { ceo: v.ceo, bizNo: v.bizNo, bank: v.bank, account: v.account, holder: v.holder } : null;
   };
   // 설치비 업체 정보: 지급대상(도급업체) 칸의 업체와 같으면 그 칸의 값, 다르면 도급업체 목록의 값
@@ -605,7 +605,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       name, bizNo: form.subBizNo, ceo: form.subCeo, manager: form.subManager, tel: form.subManagerTel,
       bank: form.subBank, account: form.subAccount, holder: form.subHolder, address: form.subAddress,
     };
-    const v = ((data && data.subcontractors) || []).find(x => x && _sameVendor(x.name, name)) || {};
+    const v = window.findVendorByName((data && data.subcontractors) || [], name) || {};
     return { name, bizNo: v.bizNo || '', ceo: v.ceo || '', manager: v.manager || '', tel: v.tel || '',
       bank: v.bank || '', account: v.account || '', holder: v.holder || '', address: v.address || '' };
   })();
@@ -677,6 +677,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 이 프로젝트 폴더 안의 파일만 바로 보이게 하기 위함. 폴더를 못 찾아도(권한/네트워크 등)
   // 가져오기 자체는 막지 않고 전체 Drive 검색으로 조용히 폴백한다.
   const pickFromDriveScoped = async (categoryKey, title) => {
+    window.startDriveLoginIfNeeded?.();   // 로그인 창을 클릭 직후에 (팝업 차단 방지)
     let folderId = null;
     try {
       if (window.hasDriveCredentials?.()) {
@@ -692,7 +693,8 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   // 업로드가 실패해도 가져오기 자체(항목 파싱)는 이미 끝난 뒤이므로 조용히 무시하고,
   // 성공하면 "🔗 파일 열기" 버튼이 그 Drive 파일을 가리키도록 url 만 돌려준다.
   const autoSaveLocalFileToDrive = async (categoryKey, blob, filename) => {
-    if (!window.hasDriveCredentials?.()) return null;
+    // 로그인이 안 돼 있으면 로그인 창을 띄우지 않고 건너뜀 (파일 선택 뒤라 팝업이 막히고, 가져오기가 멈춰 보였음)
+    if (!window.hasDriveCredentials?.() || !window.hasDriveToken?.()) return null;
     try {
       const { file } = await window.uploadFileToCategory(contract, categoryKey, blob, filename);
       return file?.url || file?.webViewLink || null;
@@ -722,7 +724,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         setInstallFileUrl('');
         const driveUrl = await autoSaveLocalFileToDrive('install', picked.blob, picked.filename);
         setInstallFileUrl(driveUrl || '');
-        toast?.(`설치비 ${items.length}건 임포트` + (driveUrl ? ' · Drive에 자동 저장됨' : ''), 'success');
+        toast?.(`설치비 ${items.length}건 임포트` + (driveUrl ? ' · Drive에 자동 저장됨' : (window.hasDriveCredentials?.() && !window.hasDriveToken?.() ? ' · Drive 자동 저장은 건너뜀 (Google 로그인 필요)' : '')), 'success');
       }
     } catch (e) {
       if (!/취소/.test(errMsg(e))) toast?.('가져오기 실패: ' + errMsg(e), 'error');
@@ -754,7 +756,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
         setProductFileUrl('');
         const driveUrl = await autoSaveLocalFileToDrive('product', picked.blob, picked.filename);
         setProductFileUrl(driveUrl || '');
-        toast?.(`제품 ${items.length}건 임포트 (재료비 ${Math.round(summary.totalMaterial).toLocaleString()}원)` + (driveUrl ? ' · Drive에 자동 저장됨' : ''), 'success');
+        toast?.(`제품 ${items.length}건 임포트 (재료비 ${Math.round(summary.totalMaterial).toLocaleString()}원)` + (driveUrl ? ' · Drive에 자동 저장됨' : (window.hasDriveCredentials?.() && !window.hasDriveToken?.() ? ' · Drive 자동 저장은 건너뜀 (Google 로그인 필요)' : '')), 'success');
       }
     } catch (e) {
       if (!/취소/.test(errMsg(e))) toast?.('가져오기 실패: ' + errMsg(e), 'error');
@@ -872,6 +874,14 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
 
   const handleSave = async () => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
+    // Drive 에 올릴 증빙(PC에서 첨부한 파일)이 있으면, 버튼을 누른 바로 지금 Google 로그인을 시작
+    // (다른 확인창·저장을 기다린 뒤에 열면 팝업이 막히거나, 창을 닫았을 때 저장이 멈추는 문제가 있었음)
+    const receiptFiles = window.hasDriveCredentials?.()
+      ? [...etcItems, ...commissionItems].filter(item => item.receipt?._localFile && !item.receipt?.driveId)
+          .map(item => ({ blob: item.receipt._localFile, filename: item.receipt.name, _itemRef: item }))
+      : [];
+    const driveLogin = receiptFiles.length ? window.startDriveLoginIfNeeded?.() : null;
+    if (driveLogin) toast?.('Google 드라이브 로그인 창이 열립니다 — 증빙 업로드용입니다. 로그인하지 않아도 지출품의서는 저장됩니다.', 'default');
     const payload = buildPayload();
     // 같은 차수에 이미 저장된 자료가 있으면 변경 저장 확인
     const sameRound = expenseHistory.filter(h => h.status !== 'cancelled' && !h.manual && Number(h.roundNo) === Number(payload.roundNo));
@@ -885,19 +895,12 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
     setSaving(true);
     try {
 
-      // Drive 증빙 파일 업로드 (자격 증명 있을 때만)
-      if (window.hasDriveCredentials?.() && (etcItems.length > 0 || commissionItems.length > 0)) {
-        const receiptFiles = [];
-        [...etcItems, ...commissionItems].forEach((item, idx) => {
-          if (item.receipt?._localFile && !item.receipt?.driveId) {
-            receiptFiles.push({
-              blob: item.receipt._localFile,
-              filename: item.receipt.name,
-              _itemRef: item,  // 나중에 업데이트용
-            });
-          }
-        });
-        if (receiptFiles.length > 0) {
+      // Drive 증빙 파일 업로드 (자격 증명 있을 때만) — 로그인이 안 되면 건너뛰고 시트 저장은 계속
+      if (receiptFiles.length > 0) {
+        if (driveLogin) await driveLogin;
+        if (!window.hasDriveToken?.()) {
+          toast?.(`Google 드라이브에 로그인하지 않아 증빙 ${receiptFiles.length}건은 올리지 않았습니다 (지출품의서는 저장). 다시 저장하면 업로드됩니다.`, 'default');
+        } else {
           try {
             toast?.(`증빙 ${receiptFiles.length}건 Drive 업로드 중…`, 'default');
             const up = await window.uploadExpenseReceipts(
@@ -1056,6 +1059,7 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
   const handlePdfDownload = async () => {
     if (!hasApiUrl()) { toast?.('API URL이 설정되지 않았습니다', 'error'); return; }
     if (!validatePrint()) return;
+    const driveLogin = window.startDriveLoginIfNeeded?.();   // Drive 에도 저장 — 로그인 창은 클릭 직후에
     setGeneratingPdf(true);
     try {
       const roundNo = Number(form.paymentCount) || 1;
@@ -1067,7 +1071,10 @@ const ExpenseModal = ({ open, onClose, contract, data, onSaved }) => {
       toast?.('PDF 다운로드 완료', 'success');
 
       // Drive 자동 업로드 (자격 증명 있을 때만)
-      if (window.hasDriveCredentials?.()) {
+      if (driveLogin) await driveLogin;
+      if (window.hasDriveCredentials?.() && !window.hasDriveToken?.()) {
+        toast?.('Google 드라이브에 로그인하지 않아 Drive 저장은 건너뛰었습니다 (PDF는 다운로드됨)', 'default');
+      } else if (window.hasDriveCredentials?.()) {
         try {
           await window.uploadExpensePdf(contract, roundNo, form.docDate, blob);
           toast?.('Drive 지출품의서 폴더에도 저장됨', 'success');
